@@ -125,7 +125,7 @@ def main():
     ap.add_argument("--game", required=True, help="the extracted game folder (code, content, meta)")
     ap.add_argument("--work", default=os.path.join(REPO, "build-ttt2"), help="build folder")
     ap.add_argument("--jobs", type=int, default=0, help="parallel compile jobs (default: all cores)")
-    ap.add_argument("--recompile-jobs", type=int, default=0, help="translator processes (about 3 GB each)")
+    ap.add_argument("--recompile-jobs", type=int, default=0, help="translator processes (about 2 GB of memory each; default 2)")
     ap.add_argument("--clean", action="store_true", help="translate and compile everything again")
     a = ap.parse_args()
 
@@ -195,16 +195,17 @@ def main():
     for dll in ("SDL3.dll",):
         if os.path.exists(os.path.join(cmake_dir, dll)):
             shutil.copy2(os.path.join(cmake_dir, dll), out)
-    with open(os.path.join(out, "portable.txt"), "w") as f:
+    with open(os.path.join(out, "portable.txt"), "w", encoding="utf-8") as f:
         f.write("Portable: saves, settings, shader caches and logs stay in this folder.\n")
     if WINDOWS:
-        with open(os.path.join(out, "run_TTT2.bat"), "w", newline="\r\n") as f:
-            f.write('@echo off\ncd /d "%%~dp0"\nset "GAME=%s"\nif not "%%~1"=="" set "GAME=%%~1"\n'
+        # UTF-8 with chcp 65001: the game folder may have a non-ASCII name (e.g. in a Cyrillic user folder)
+        with open(os.path.join(out, "run_TTT2.bat"), "w", newline="\r\n", encoding="utf-8") as f:
+            f.write('@echo off\nchcp 65001 >nul\ncd /d "%%~dp0"\nset "GAME=%s"\nif not "%%~1"=="" set "GAME=%%~1"\n'
                     "set WWHD_PRO_CONTROLLER=1\nset WWHD_VK_VERTEX_COPY_WINDOW=1\n"
                     'TTT2.exe --game "%%GAME%%"\nif errorlevel 1 pause\n' % game)
     else:
         path = os.path.join(out, "run_TTT2.sh")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write('#!/bin/sh\ncd "$(dirname "$0")"\nGAME="${1:-%s}"\n'
                     "WWHD_PRO_CONTROLLER=1 WWHD_VK_VERTEX_COPY_WINDOW=1 exec ./ttt2 --game \"$GAME\"\n" % game)
         os.chmod(path, 0o755)

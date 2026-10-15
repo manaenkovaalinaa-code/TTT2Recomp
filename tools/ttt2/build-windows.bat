@@ -5,6 +5,10 @@ rem Builds the Tekken Tag Tournament 2 port from your own dump of the game (Wind
 rem usage: build-windows.bat ["path\to\extracted game folder"]
 cd /d "%~dp0..\.."
 set "REPO=%CD%"
+if not "%REPO:~50,1%"=="" (
+  echo Warning: "%REPO%" is a long path. Some compiler paths may exceed the Windows limit;
+  echo if the build fails, move this folder to a short path such as C:\TTT2Recomp.
+)
 set "GAME=%~1"
 if "%GAME%"=="" (
   echo Drag the extracted game folder ^(with code, content, meta^) into this window and press Enter:
@@ -17,8 +21,8 @@ if not exist "%GAME%\code" (
   exit /b 1
 )
 set "PY="
-where py >nul 2>nul && py -3 -c "import sys; sys.exit(sys.version_info < (3, 8))" >nul 2>nul && set "PY=py -3"
-if not defined PY where python >nul 2>nul && python -c "import sys; sys.exit(sys.version_info < (3, 8))" >nul 2>nul && set "PY=python"
+where py >nul 2>nul && py -3 -c "import sys; sys.exit(sys.version_info < (3, 10))" >nul 2>nul && set "PY=py -3"
+if not defined PY where python >nul 2>nul && python -c "import sys; sys.exit(sys.version_info < (3, 10))" >nul 2>nul && set "PY=python"
 if not defined PY (
   if not exist "%REPO%\.tools\python\python.exe" (
     echo Downloading Python 3.14 ^(embeddable, python.org^)...

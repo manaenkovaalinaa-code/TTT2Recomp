@@ -74,8 +74,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("game")
     ap.add_argument("outdir")
-    ap.add_argument("--jobs", type=int, default=max(1, min(4, (os.cpu_count() or 2) // 2)),
-                    help="worker processes (each needs about 3 GB of memory)")
+    ap.add_argument("--jobs", type=int, default=2, help="worker processes (each needs about 2 GB of memory)")
     ap.add_argument("--worker", type=int, help=argparse.SUPPRESS)
     a = ap.parse_args()
     rpx = find_rpx(a.game)
