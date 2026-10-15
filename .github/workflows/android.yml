@@ -1,0 +1,113 @@
+# Android build check: builds the app's native library (libmain.so, android/build_native.sh) and the
+# APK (android/, Gradle) against placeholder guest code (tools/recomp/stubgen.py; no game files
+# involved), the way the release workflow builds the desktop runtimes.
+#
+# Legal: CI never has the game. The APK built here cannot run it (its game code is placeholders) and
+# is kept only as a short-lived CI artifact for inspection, never as a release asset: players build
+# their own APK from their own game (android/build_native.sh), and it must not be shared.
+# tools/release/guard.py checks the APK like the release packages.
+#
+# Pinned: the NDK, SDK platform and build tools (sdkmanager checks the packages' checksums), Gradle
+# (android/gradle/wrapper: distributionSha256Sum; the wrapper jar is validated below), and SDL3,
+# glslang, zlib and LZ4 (URL + SHA-256 in cmake/WindowsDependencies.cmake, WWHD_BUNDLED_DEPS).
+name: android
+
+on:
+  push:
+    branches: ["**"]   # not on tag pushes: a release tag points at a commit CI already tested
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      NDK_VERSION: 30.0.16248370
+      SDK_PLATFORM: platforms;android-36
+      SDK_BUILD_TOOLS: build-tools;35.0.0
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Validate the Gradle wrapper
+        uses: gradle/actions/wrapper-validation@v4
+
+      - name: Install the NDK and SDK packages
+        timeout-minutes: 15  # a stalled download fails fast instead of hanging until GitHub's 6 h limit
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$NDK_VERSION" "$SDK_PLATFORM" "$SDK_BUILD_TOOLS"
+
+      - name: Native library (placeholder game code)
+        run: |
+          python3 tools/recomp/stubgen.py build/gen-stub
+          GEN_DIR="$PWD/build/gen-stub" ANDROID_SDK="$ANDROID_HOME" JOBS=4 android/build_native.sh
+
+      - name: Synthetic translation baseline (no game data)
+        run: |
+          python3 -m unittest discover -s tools/android -p 'test_*.py'
+          javac -d build/android-user-dir-test android/app/src/main/java/org/wwhdrecomp/wwhd/AndroidUserDirectories.java tools/android/AndroidUserDirectoriesTest.java
+          java -cp build/android-user-dir-test org.wwhdrecomp.wwhd.AndroidUserDirectoriesTest
+          clang++ -std=c++20 -I runtime/src runtime/tools/android_user_directory_test.cpp -o build/android-user-directory-test
+          build/android-user-directory-test
+          javac -d build/setup-policy-test android/app/src/main/java/org/wwhdrecomp/wwhd/SetupPolicy.java tools/android/SetupPolicyTest.java
+          java -cp build/setup-policy-test SetupPolicyTest
+          javac -d build/tga-image-test android/app/src/main/java/org/wwhdrecomp/wwhd/TgaImage.java tools/android/TgaImageTest.java
+          java -cp build/tga-image-test TgaImageTest
+          javac -d build/resource-verifier-test android/app/src/main/java/org/wwhdrecomp/wwhd/ResourceVerifier.java tools/android/ResourceVerifierTest.java
+          java -cp build/resource-verifier-test org.wwhdrecomp.wwhd.ResourceVerifierTest
+          javac -d build/resource-cleanup-test android/app/src/main/java/org/wwhdrecomp/wwhd/ResourceVerifier.java android/app/src/main/java/org/wwhdrecomp/wwhd/ResourceCacheCleanup.java tools/android/ResourceCacheCleanupTest.java
+          java -cp build/resource-cleanup-test org.wwhdrecomp.wwhd.ResourceCacheCleanupTest
+          javac -d build/setup-recovery-test android/app/src/main/java/org/wwhdrecomp/wwhd/SetupRecoveryPolicy.java tools/android/SetupRecoveryPolicyTest.java
+          java -cp build/setup-recovery-test SetupRecoveryPolicyTest
+          javac -d build/fold-layout-test android/app/src/main/java/org/wwhdrecomp/wwhd/FoldLayout.java tools/android/FoldLayoutTest.java
+          java -cp build/fold-layout-test FoldLayoutTest
+          clang++ -std=c++20 -I runtime/src runtime/tools/gamepad_touch_test.cpp -o build/gamepad-touch-test
+          build/gamepad-touch-test
+          clang++ -std=c++20 -pthread -I runtime/src runtime/tools/present_worker_test.cpp -o build/present-worker-test
+          build/present-worker-test
+          clang++ -std=c++20 -I runtime/src runtime/tools/presentation_queue_test.cpp -o build/presentation-queue-test
+          build/presentation-queue-test
+          clang++ -std=c++20 -I runtime/src -I runtime/include \
+            runtime/tools/display_fallback_test.cpp runtime/src/gfx/display_modes.cpp -o build/display-fallback-test
+          build/display-fallback-test
+          PYTHONHASHSEED=1 python3 tools/recomp/android_fixture.py --output build/android-fixture-desktop
+          PYTHONHASHSEED=917 python3 tools/recomp/android_fixture.py --output build/android-fixture-repeat --reference build/android-fixture-desktop
+          clang -std=c11 -I runtime/include -I build/android-fixture-desktop/gen \
+            build/android-fixture-desktop/gen/code_000.c \
+            build/android-fixture-desktop/gen/harness.c -o build/android-fixture-desktop/run
+          build/android-fixture-desktop/run
+
+      - name: Keep synthetic baseline and translation metrics
+        uses: actions/upload-artifact@v5
+        with:
+          name: android-translation-baseline-${{ github.sha }}
+          path: build/android-fixture-desktop/
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: APK
+        working-directory: android
+        run: ./gradlew --no-daemon assembleRelease
+
+      - name: Legal check of the APK
+        run: |
+          ls -la android/app/build/outputs/apk/release/
+          python3 tools/release/guard.py android/app/build/outputs/apk/release/*.apk
+
+      - name: Keep the APK for a few days (placeholder code, not a release)
+        uses: actions/upload-artifact@v5
+        with:
+          name: wwhd-android-placeholder-${{ github.sha }}
+          path: android/app/build/outputs/apk/release/*.apk
+          retention-days: 3
+          if-no-files-found: error
