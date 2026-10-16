@@ -633,7 +633,11 @@ static void* thread_main(void* p) {
     {
         // the game's main thread (the first, unnamed one) builds every frame's GX2 commands
         static std::atomic<bool> hinted{false};
-        if (name.empty() && !hinted.exchange(true)) perf_hint::add_current_thread(), thread_sampler::add_current_thread("game");
+        if (name.empty() && !hinted.exchange(true)) perf_hint::add_current_thread();
+        // WWHD_SAMPLE_THREADS: every guest thread is sampled, tagged with its name, core and priority
+        char tag[96];
+        snprintf(tag, sizeof tag, "%s c%u p%d", name.empty() ? "main" : name.c_str(), ht->core, (int)ht->prio);
+        thread_sampler::add_current_thread(tag);
     }
 #ifdef __APPLE__
     ht->mach = pthread_mach_thread_np(pthread_self());

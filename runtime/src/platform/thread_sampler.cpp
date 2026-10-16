@@ -1,7 +1,7 @@
-// thread_sampler.h: a sampling profiler for the frame threads (Windows on ARM64 only).
+// thread_sampler.h: a sampling profiler for the frame threads (Windows on ARM64 and x86-64).
 #include "thread_sampler.h"
 
-#if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__))
+#if defined(_WIN32) && (defined(_M_ARM64) || defined(__aarch64__) || defined(_M_X64) || defined(__x86_64__))
 #include <windows.h>
 #include <psapi.h>
 
@@ -17,7 +17,7 @@
 
 namespace thread_sampler {
 namespace {
-constexpr int kMaxThreads = 8;
+constexpr int kMaxThreads = 48;
 constexpr int kMaxFrames = 32;
 // one sample on disk: the thread's tag index, the number of frames, then the frames (pc, lr, the
 // return addresses of the frame-pointer chain)
@@ -47,6 +47,36 @@ uint64_t strip_pac(uint64_t a) { return a & 0x0000FFFFFFFFFFFFull; }
 // the frame-pointer chain (x29 points at the saved {x29, x30} pair). No allocation happens here.
 // (RtlLookupFunctionEntry reads the loader's function tables: a thread suspended while it changes
 // them, at a module load, could stall the sampler; the frame threads do not load modules.)
+#if defined(_M_X64) || defined(__x86_64__)
+// x86-64: unwind with the modules' unwind data (clang/mingw emits .pdata for every function, the
+// generated game code included); a pc without it is a leaf whose return address is at [rsp]
+uint32_t capture(HANDLE h, uint64_t* out) {
+    CONTEXT c{};
+    c.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+    if (!GetThreadContext(h, &c)) return 0;
+    const uint64_t lo = c.Rsp, hi = c.Rsp + (1u << 20);
+    uint32_t n = 0;
+    while (n < kMaxFrames) {
+        const uint64_t pc = c.Rip;
+        if (!pc) break;
+        out[n++] = pc;
+        const uint64_t sp = c.Rsp;
+        DWORD64 image = 0;
+        PRUNTIME_FUNCTION f = RtlLookupFunctionEntry(pc, &image, nullptr);
+        if (f) {
+            PVOID handler_data = nullptr;
+            DWORD64 frame = 0;
+            RtlVirtualUnwind(UNW_FLAG_NHANDLER, image, pc, f, &c, &handler_data, &frame, nullptr);
+        } else {
+            if (!readable(c.Rsp, lo, hi)) break;
+            c.Rip = *reinterpret_cast<const uint64_t*>(c.Rsp);
+            c.Rsp += 8;
+        }
+        if (c.Rsp <= sp || c.Rsp >= hi) break;
+    }
+    return n;
+}
+#else
 uint32_t capture(HANDLE h, uint64_t* out) {
     CONTEXT c{};
     c.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
@@ -86,6 +116,8 @@ uint32_t capture(HANDLE h, uint64_t* out) {
     }
     return n;
 }
+
+#endif
 
 void write_modules() {
     const std::string path = g_prefix + ".modules";
@@ -142,6 +174,12 @@ void sampler_main() {
             }
             fflush(out);
             batch.clear();
+            // threads registered after the header: all tags, by index, in <prefix>.tags
+            if (FILE* t = fopen((g_prefix + ".tags").c_str(), "w")) {
+                std::lock_guard<std::mutex> lk(g_mu);
+                for (int i = 0; i < g_count.load(); i++) fprintf(t, "%s\n", g_targets[i].tag.c_str());
+                fclose(t);
+            }
             last_flush = now;
             if (now - start > 10000 && now - start < 11500) write_modules();  // modules loaded late (the driver's)
         }
