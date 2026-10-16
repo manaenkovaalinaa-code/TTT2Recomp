@@ -137,7 +137,7 @@ uint32_t exp_alloc(uint32_t heap, uint32_t size, int32_t align) {
         Cpu* c = threads::current();
         LOG("[memlog] exp alloc heap=%08X size=%X -> %08X-%08X thread %08X lr %08X", heap, size, p, p + size, threads::current_thread(), c ? c->lr : 0);
     }
-    if (const char* e = getenv("WWHD_SPY_ALLOC"); e && p && size == strtoul(e, nullptr, 16)) {
+    if (const char* e = []{ static const char* v = std::getenv("WWHD_SPY_ALLOC"); return v; }(); e && p && size == strtoul(e, nullptr, 16)) {
         LOG("[spy] watching allocation %08X-%08X", p, p + size);
         wwatch::spy(p, size);
     }
@@ -200,7 +200,7 @@ void mem_init_data_imports(uint32_t alloc_slot, uint32_t alloc_ex_slot, uint32_t
 HLE(coreinit, MEMCreateExpHeapEx) {
     std::lock_guard<std::mutex> lk(g_mem_mutex);
     TRACE("[mem] MEMCreateExpHeapEx(%08X, %X)", arg(c, 0), arg(c, 1));
-    if (getenv("WWHD_MEMLOG")) LOG("[memlog] create exp heap %08X-%08X lr %08X", arg(c, 0), arg(c, 0) + arg(c, 1), c->lr);
+    if ([]{ static const char* v = std::getenv("WWHD_MEMLOG"); return v; }()) LOG("[memlog] create exp heap %08X-%08X lr %08X", arg(c, 0), arg(c, 0) + arg(c, 1), c->lr);
     ret(c, create_exp(arg(c, 0), arg(c, 1)));
 }
 HLE(coreinit, MEMDestroyExpHeap) {
@@ -214,7 +214,7 @@ HLE(coreinit, MEMFreeToExpHeap) {
     std::lock_guard<std::mutex> lk(g_mem_mutex);
     auto it = g_exp.find(arg(c, 0));
     if (it != g_exp.end() && arg(c, 1)) it->second->release(arg(c, 1));
-    if (getenv("WWHD_MEMLOG")) LOG("[memlog] exp free heap=%08X %08X thread %08X lr %08X", arg(c, 0), arg(c, 1), threads::current_thread(), c->lr);
+    if ([]{ static const char* v = std::getenv("WWHD_MEMLOG"); return v; }()) LOG("[memlog] exp free heap=%08X %08X thread %08X lr %08X", arg(c, 0), arg(c, 1), threads::current_thread(), c->lr);
 }
 HLE(coreinit, MEMGetAllocatableSizeForExpHeapEx) {
     std::lock_guard<std::mutex> lk(g_mem_mutex);
@@ -243,7 +243,7 @@ HLE(coreinit, MEMDestroyFrmHeap) {
 HLE(coreinit, MEMAllocFromFrmHeapEx) {
     uint32_t p = frm_alloc(arg(c, 0), arg(c, 1), (int32_t)arg(c, 2));
     TRACE("[mem] frm alloc heap=%08X size=%X align=%d -> %08X", arg(c, 0), arg(c, 1), (int32_t)arg(c, 2), p);
-    if (getenv("WWHD_MEMLOG")) LOG("[memlog] frm alloc heap=%08X size=%X -> %08X lr %08X", arg(c, 0), arg(c, 1), p, c->lr);
+    if ([]{ static const char* v = std::getenv("WWHD_MEMLOG"); return v; }()) LOG("[memlog] frm alloc heap=%08X size=%X -> %08X lr %08X", arg(c, 0), arg(c, 1), p, c->lr);
     ret(c, p);
 }
 HLE(coreinit, MEMGetAllocatableSizeForFrmHeapEx) {
@@ -267,12 +267,12 @@ HLE(coreinit, MEMGetBaseHeapHandle) {
 HLE(coreinit, OSBlockMove) {
     static const uint32_t logmin = getenv("WWHD_BLOCKMOVE_LOG") ? strtoul(getenv("WWHD_BLOCKMOVE_LOG"), nullptr, 16) : 0;
     if (logmin && arg(c, 2) >= logmin) LOG("[blockmove] %08X <- %08X size %X thread %08X lr %08X", arg(c, 0), arg(c, 1), arg(c, 2), threads::current_thread(), c->lr);
-    if (const char* e = getenv("WWHD_BLOCKMOVE_DUMP"); e && arg(c, 2) == strtoul(e, nullptr, 16)) {
+    if (const char* e = []{ static const char* v = std::getenv("WWHD_BLOCKMOVE_DUMP"); return v; }(); e && arg(c, 2) == strtoul(e, nullptr, 16)) {
         static int n = 0; char name[64]; snprintf(name, sizeof name, "captures/blockmove-%08X-%d.bin", arg(c, 1), n++);
         if (FILE* f = fopen(name, "wb")) { fwrite(mem::ptr(arg(c, 1)), 1, arg(c, 2), f); fclose(f); }
     }
     memmove(mem::ptr(arg(c, 0)), mem::ptr(arg(c, 1)), arg(c, 2)); ret(c, arg(c, 0));
-    if (const char* e = getenv("WWHD_BLOCKMOVE_SPY"); e && arg(c, 2) == strtoul(e, nullptr, 16)) {
+    if (const char* e = []{ static const char* v = std::getenv("WWHD_BLOCKMOVE_SPY"); return v; }(); e && arg(c, 2) == strtoul(e, nullptr, 16)) {
         LOG("[spy] watching block move destination %08X-%08X", arg(c, 0), arg(c, 0) + arg(c, 2));
         wwatch::spy(arg(c, 0), arg(c, 2));
     }

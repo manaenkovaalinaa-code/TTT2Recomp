@@ -519,7 +519,7 @@ static void op_log(Op op, const uint32* p, uint32 n) {
     static uint64_t lo = ~0ull, hi = 0, swaps = 0;
     static uint32 regs_in_row = 0;
     static const bool on = [] {
-        const char* e = getenv("WWHD_OPLOG");
+        const char* e = []{ static const char* v = std::getenv("WWHD_OPLOG"); return v; }();
         if (!e) return false;
         lo = strtoull(e, nullptr, 10);
         const char* d = strchr(e, '-');
@@ -1029,7 +1029,7 @@ HLE(gx2, GX2CopySurface) {
             threads::current_thread(), c->lr, arg(c, 0), ld32(arg(c, 0) + 0x24), arg(c, 3), ld32(arg(c, 3) + 0x24), ld32(arg(c, 3) + 0x20));
     // TTT2 port diagnostics: WWHD_COPY_TRACE=WxH dumps every thread's recent guest functions
     // (WWHD_TRACE_FUNCS=1) when a copy of that size is issued
-    if (const char* e = getenv("WWHD_COPY_TRACE")) {
+    if (const char* e = []{ static const char* v = std::getenv("WWHD_COPY_TRACE"); return v; }()) {
         unsigned w = 0, h = 0;
         if (sscanf(e, "%ux%u", &w, &h) == 2 && ld32(arg(c, 3) + 4) == w && ld32(arg(c, 3) + 8) == h) {
             static int n = 0;
@@ -1039,7 +1039,7 @@ HLE(gx2, GX2CopySurface) {
         }
     }
     // TTT2 port diagnostics: WWHD_COPY_SPY=WxH logs who writes the copy's source after the copy
-    if (const char* e = getenv("WWHD_COPY_SPY")) {
+    if (const char* e = []{ static const char* v = std::getenv("WWHD_COPY_SPY"); return v; }()) {
         unsigned w = 0, h = 0;
         if (sscanf(e, "%ux%u", &w, &h) == 2 && ld32(arg(c, 3) + 4) == w && ld32(arg(c, 3) + 8) == h) {
             LOG("[spy] copy from %08X (+%X) by thread %08X lr %08X", ld32(arg(c, 0) + 0x24), ld32(arg(c, 0) + 0x20), threads::current_thread(), c->lr);
@@ -1222,7 +1222,7 @@ HLE(gx2, GX2SwapScanBuffers) {
         double s = std::chrono::duration<double>(now - last).count();
         last = now;
         LOG("[gx2] frame %llu, %.1f swaps/s, swap interval %u", (unsigned long long)g_swap_count, 300 / s, g_swap_interval);
-        if (getenv("WWHD_SCHED_STATS")) threads::report_sched(300);
+        if ([]{ static const char* v = std::getenv("WWHD_SCHED_STATS"); return v; }()) threads::report_sched(300);
     }
 }
 HLE(gx2, GX2GetSwapStatus) {

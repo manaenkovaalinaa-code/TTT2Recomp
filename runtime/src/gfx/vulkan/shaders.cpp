@@ -653,7 +653,7 @@ bool decompile(Shader& shader, const uint32_t* regs, bool vertex, LatteFetchShad
     if (options.areaSampledTextures && ::gfx::area_sample::rewrite(shader.glsl, fixes, false) <= 0)
         fprintf(stderr, "[vulkan] pixel shader %08X: upscaling fix not applied\n", address);
     // TTT2 port diagnostics: WWHD_VK_DUMP_GLSL=1 writes every translated shader to captures/
-    if (getenv("WWHD_VK_DUMP_GLSL")) {
+    if ([]{ static const char* v = std::getenv("WWHD_VK_DUMP_GLSL"); return v; }()) {
         std::error_code ec; std::filesystem::create_directories("captures", ec);
         char name[96];
         snprintf(name, sizeof name, "captures/%s-%08X.glsl", vertex ? "vs" : "ps", address);
@@ -661,7 +661,7 @@ bool decompile(Shader& shader, const uint32_t* regs, bool vertex, LatteFetchShad
     }
     // TTT2 diagnostics: WWHD_PS_DEBUG=diffuse|mask|nolight shows one input of the character material
     // shaders (pixel shaders with an environment cube on unit 7 that sample unit 0) instead of their result
-    if (const char* dbg = getenv("WWHD_PS_DEBUG"); dbg && !vertex &&
+    if (const char* dbg = []{ static const char* v = std::getenv("WWHD_PS_DEBUG"); return v; }(); dbg && !vertex &&
         shader.glsl.find("samplerCubeArray textureUnitPS7") != std::string::npos) {
         // sample the unit again into dbgTex just before the game's own sample (same coordinates)
         const int unit = !strcmp(dbg, "diffuse") ? 0 : !strcmp(dbg, "mask") ? 2 : !strcmp(dbg, "normal") ? 1 : -1;

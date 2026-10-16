@@ -1925,7 +1925,7 @@ StageResources bind_stage(const uint32_t *r, vk::Shader *sh,
       s = &aoPrivateColor;
     upload_surface(s);
     char psName[16]; snprintf(psName, sizeof psName, "%08X", r[mmSQ_PGM_START_PS] << 8);
-    if (const char* e = std::getenv("WWHD_DUMP_PS_TEXTURES"); e && !sh->vertex && (strstr(e, psName) || (!strcmp(e, "auto") && sh->dec->textureUnitListCount >= 5 && unit <= 4 && unit != 1))) {
+    if (const char* e = []{ static const char* v = std::getenv("WWHD_DUMP_PS_TEXTURES"); return v; }(); e && !sh->vertex && (strstr(e, psName) || (!strcmp(e, "auto") && sh->dec->textureUnitListCount >= 5 && unit <= 4 && unit != 1))) {
       static std::unordered_set<uint64_t> dumped;
       if (dumped.size() < 400 && dumped.insert(uint64_t(s->addr) << 8 | unit).second) {
         char tag[32]; snprintf(tag, sizeof tag, "ps%s-u%u", psName, unit);

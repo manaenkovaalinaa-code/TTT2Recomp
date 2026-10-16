@@ -1239,7 +1239,7 @@ void upload_surface(Surface* s) {
         std::vector<uint8_t> data;uint32_t w,h,slices;decode_level(s,level,mip_base(s,level),data,w,h,slices);
         // TTT2 port diagnostics: WWHD_DUMP_SURFACE=<addr> writes that surface's detiled level 0 (raw
         // texels or blocks) to captures/ each time it is uploaded (the first 4 times)
-        if(const char* e=getenv("WWHD_DUMP_SURFACE"); e && level==0 && dump_surface_match(e,s->addr,s->width,s->height)) {
+        if(const char* e=[]{ static const char* v = std::getenv("WWHD_DUMP_SURFACE"); return v; }(); e && level==0 && dump_surface_match(e,s->addr,s->width,s->height)) {
             static int n=0;
             if(n<4){char name[96];snprintf(name,sizeof name,"captures/surf-%08X-%ux%u-fmt%X-%d.bin",s->addr,w,h,s->format,n++);
                 if(FILE* f=fopen(name,"wb")){fwrite(data.data(),1,data.size(),f);fclose(f);}}
@@ -1431,7 +1431,7 @@ void copy_surface_impl(uint32_t srcAddr,uint32_t srcMip,uint32_t srcSlice,uint32
             if(better(image.get())){gpuSrc=image.get();gpuLevel=srcMip;}
     }
     if(gpuSrc&&gpuLevel==0)gpuSrc=adopt_newer_alias(gpuSrc);
-    if(const char* e=getenv("WWHD_DUMP_SURFACE"); e && dump_surface_match(e,dbase,uint32_t(d->width),uint32_t(d->height)))
+    if(const char* e=[]{ static const char* v = std::getenv("WWHD_DUMP_SURFACE"); return v; }(); e && dump_surface_match(e,dbase,uint32_t(d->width),uint32_t(d->height)))
         LOG("[copy] %08X -> %08X via %s (src pitch %u tm %u, dst pitch %u tm %u)", sbase, dbase, gpuSrc ? "GPU" : "CPU",
             uint32_t(s->pitch), uint32_t(s->tileMode.value()), uint32_t(d->pitch), uint32_t(d->tileMode.value()));
     if(gpuSrc) {
@@ -1501,7 +1501,7 @@ void copy_surface_impl(uint32_t srcAddr,uint32_t srcMip,uint32_t srcSlice,uint32
     if(Latte::TM_IsMacroTiled(dtm))LatteAddrLib::SetupCachedSurfaceAddrInfo(&dci,dstSlice,0,bpp,di.pitch,di.height,di.depth,1,dtm,(df.depth||df.convert==Convert::D24_R32F),(dswz>>8)&1,(dswz>>9)&3);
     // Experiment (WWHD_RAWCOPY_LINEAR_SPECIAL=1): treat a LINEAR_SPECIAL source as already laid out
     // like the destination and copy the bytes as they are
-    if(getenv("WWHD_RAWCOPY_LINEAR_SPECIAL")&&uint32_t(s->tileMode.value())==16&&srcMip==0&&dstMip==0) {
+    if([]{ static const char* v = std::getenv("WWHD_RAWCOPY_LINEAR_SPECIAL"); return v; }()&&uint32_t(s->tileMode.value())==16&&srcMip==0&&dstMip==0) {
         uint32_t n=std::min<uint32_t>(uint32_t(s->imageSize),uint32_t(d->imageSize));
         memmove(mem::ptr(dbase),mem::ptr(sbase),n);
         for(auto& [address,image]:R.surfaces)if(address==dbase){image->gpuWritten=false;image->dirty=true;image->lastCheckedFrame=~0ull;}
@@ -1513,7 +1513,7 @@ void copy_surface_impl(uint32_t srcAddr,uint32_t srcMip,uint32_t srcSlice,uint32
         uint32_t offset=element_offset(si,stm,x,y,srcSlice,bpp,sswz,&sci,(sf.depth||sf.convert==Convert::D24_R32F));
         memcpy(rows.data()+(size_t(y)*bw+x)*sf.bytesPerBlock,mem::ptr(sbase+offset),sf.bytesPerBlock);
     }
-    if(const char* e=getenv("WWHD_DUMP_SURFACE"); e && dump_surface_match(e,dbase,uint32_t(d->width),uint32_t(d->height))) {
+    if(const char* e=[]{ static const char* v = std::getenv("WWHD_DUMP_SURFACE"); return v; }(); e && dump_surface_match(e,dbase,uint32_t(d->width),uint32_t(d->height))) {
         static int n=0;char name[96];snprintf(name,sizeof name,"captures/copysrc-%08X-%ux%u-%d.bin",dbase,bw*4,bh*4,n++);
         if(FILE* f=fopen(name,"wb")){fwrite(rows.data(),1,rows.size(),f);fclose(f);}
     }

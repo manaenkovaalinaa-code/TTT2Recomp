@@ -139,7 +139,7 @@ __attribute__((constructor)) static void trace_init() {
         g_ppc_trace = 1;
     }
     if (getenv("WWHD_NAN_PROBE")) g_ppc_trace = 1;
-    if (const char* e = getenv("WWHD_COUNT_FUNCS")) {
+    if (const char* e = []{ static const char* v = std::getenv("WWHD_COUNT_FUNCS"); return v; }()) {
         for (const char* p = e; *p && g_count_addrs.size() < 32;) {
             char* end; uint32_t a = (uint32_t)strtoul(p, &end, 16);
             if (end == p) break;
