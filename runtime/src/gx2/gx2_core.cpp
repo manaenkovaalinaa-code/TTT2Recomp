@@ -660,6 +660,18 @@ static void execute_op(Op op, const uint32* p, uint32 n) {
         if (n) render::set_frame_aspect(gx2::bitsf(p[0]));  // aspect ratio from the next frame on (aspect.cpp)
         if (n >= 3 && p[2]) render::request_capture();
         render::swap();
+        // WWHD_SCHED_STATS: the render thread's own CPU time per guest frame
+        if (static const bool stats = getenv("WWHD_SCHED_STATS") != nullptr; stats) {
+            static uint64_t frames = 0, cpu0 = 0;
+            static auto t0 = std::chrono::steady_clock::now();
+            if (++frames % 300 == 0) {
+                const uint64_t cpu = rprof::thread_cpu_ns();
+                const double wall = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+                if (cpu0) LOG("[sched] render thread: %.2f ms CPU per frame (%.0f%% busy)", (cpu - cpu0) / 1e6 / 300, (cpu - cpu0) / 1e4 / wall);
+                cpu0 = cpu;
+                t0 = std::chrono::steady_clock::now();
+            }
+        }
         break;
     }
     case OP_SET_PROJ_REGS: {
@@ -1210,7 +1222,7 @@ HLE(gx2, GX2SwapScanBuffers) {
         double s = std::chrono::duration<double>(now - last).count();
         last = now;
         LOG("[gx2] frame %llu, %.1f swaps/s, swap interval %u", (unsigned long long)g_swap_count, 300 / s, g_swap_interval);
-        if (getenv("WWHD_SCHED_STATS")) threads::report_sched();
+        if (getenv("WWHD_SCHED_STATS")) threads::report_sched(300);
     }
 }
 HLE(gx2, GX2GetSwapStatus) {

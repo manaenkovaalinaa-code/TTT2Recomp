@@ -111,8 +111,11 @@ struct HostThread {
     std::atomic<uint64_t> held_ns{0}, wait_ns{0};
 #ifdef __APPLE__
     mach_port_t mach = 0;     // for CPU time statistics
-    uint64_t last_cpu_us = 0;
+#elif !defined(_WIN32)
+    clockid_t cpu_clock{};    // for CPU time statistics
+    bool has_cpu_clock = false;
 #endif
+    uint64_t last_cpu_us = 0;
     // save states: whether the thread is parked at a point where its whole state is its Cpu plus
     // guest memory plus the HLE objects (see park_wait)
     std::atomic<int> wst{0};   // kRunning, kParked or kRequester
@@ -324,7 +327,7 @@ static void sched_tick_thread() {
         }
         if (timed_stats && std::chrono::steady_clock::now() >= next_report) {
             next_report += std::chrono::seconds(5);
-            threads::report_sched();
+            threads::report_sched(0);
         }
         // Timed waits retain the polling cadence, but cannot require preemption
         // without a ready contender. Queue insertion accounts for contenders
@@ -346,7 +349,7 @@ static thread_local std::chrono::steady_clock::time_point t_block_start;
 
 namespace threads {
 // share of wall time each thread held / waited for its core since the last report
-void report_sched() {
+void report_sched(unsigned frames) {
     static auto last = std::chrono::steady_clock::now();
     auto now = std::chrono::steady_clock::now();
     double span = std::chrono::duration<double, std::nano>(now - last).count();
@@ -355,8 +358,6 @@ void report_sched() {
     std::string out;
     for (auto& [g, t] : g_threads) {
         uint64_t h = t->held_ns.exchange(0), w = t->wait_ns.exchange(0);
-        if (h < span * 0.02 && w < span * 0.02) continue;
-        std::string name = mem::read_cstr(ld32(t->guest + osthread::kName));
         // actual CPU time the host gave this thread (vs. time it held its emulated core)
         double cpu = 0;
 #ifdef __APPLE__
@@ -370,10 +371,33 @@ void report_sched() {
                 t->last_cpu_us = us;
             }
         }
- #endif
-        char buf[192];
-        snprintf(buf, sizeof buf, " [%s c%u p%d run %.0f%% cpu %.0f%% wait %.0f%%]", name.empty() ? "main" : name.c_str(), t->core,
-                 t->prio, 100.0 * h / span, cpu, 100.0 * w / span);
+#elif defined(_WIN32)
+        {
+            FILETIME c, e, k, u;
+            if (t->pt && GetThreadTimes(t->pt, &c, &e, &k, &u)) {
+                auto v = [](FILETIME f) { return ((uint64_t)f.dwHighDateTime << 32 | f.dwLowDateTime) / 10; };
+                uint64_t us = v(k) + v(u);
+                cpu = 100.0 * (us - t->last_cpu_us) * 1000.0 / span;
+                t->last_cpu_us = us;
+            }
+        }
+#else
+        if (t->has_cpu_clock) {
+            timespec ts{};
+            if (!clock_gettime(t->cpu_clock, &ts)) {
+                uint64_t us = (uint64_t)ts.tv_sec * 1000000 + (uint64_t)ts.tv_nsec / 1000;
+                cpu = 100.0 * (us - t->last_cpu_us) * 1000.0 / span;
+                t->last_cpu_us = us;
+            }
+        }
+#endif
+        if (h < span * 0.02 && w < span * 0.02 && cpu < 2.0) continue;
+        std::string name = mem::read_cstr(ld32(t->guest + osthread::kName));
+        char buf[224];
+        // ms/frame: CPU time per guest frame (frames > 0: called every `frames` swaps)
+        const double msPerFrame = frames ? cpu / 100.0 * span / 1e6 / frames : 0;
+        snprintf(buf, sizeof buf, " [%s c%u p%d run %.0f%% cpu %.0f%% (%.2f ms/frame) wait %.0f%%]", name.empty() ? "main" : name.c_str(),
+                 t->core, t->prio, 100.0 * h / span, cpu, msPerFrame, 100.0 * w / span);
         out += buf;
     }
     LOG("[sched]%s", out.c_str());
@@ -613,6 +637,8 @@ static void* thread_main(void* p) {
     }
 #ifdef __APPLE__
     ht->mach = pthread_mach_thread_np(pthread_self());
+#elif !defined(_WIN32)
+    ht->has_cpu_clock = pthread_getcpuclockid(pthread_self(), &ht->cpu_clock) == 0;
 #endif
     // keep guest threads on performance cores (see host::boost_thread_priority): the default QoS
     // let macOS park them on efficiency cores, which showed up as the main thread holding its core
