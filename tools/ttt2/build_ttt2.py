@@ -227,13 +227,19 @@ def main():
 
     # 3. compile
     log("configuring")
+    # a configure that failed leaves its compiler checks behind: start that folder afresh
+    if os.path.isdir(cmake_dir) and not os.path.exists(os.path.join(cmake_dir, "build.ninja")):
+        shutil.rmtree(cmake_dir, ignore_errors=True)
+    # paths in -D values become CMake strings, where a backslash starts an escape: forward slashes
+    def cm(path):
+        return path.replace("\\", "/")
     cfg = [cmake, "-S", REPO, "-B", cmake_dir, "-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release",
-           "-DCMAKE_MAKE_PROGRAM=" + ninja, "-DCMAKE_C_COMPILER=" + cc, "-DCMAKE_CXX_COMPILER=" + cxx,
-           "-DGEN_DIR=" + gen, "-DWWHD_SETUP_GUI=OFF"]
+           "-DCMAKE_MAKE_PROGRAM=" + cm(ninja), "-DCMAKE_C_COMPILER=" + cm(cc), "-DCMAKE_CXX_COMPILER=" + cm(cxx),
+           "-DGEN_DIR=" + cm(gen), "-DWWHD_SETUP_GUI=OFF"]
     if WINDOWS:
-        cfg += ["-DCMAKE_RC_COMPILER=" + rc, "-DWWHD_BUNDLED_DEPS=ON", "-DCMAKE_EXE_LINKER_FLAGS=-static",
-                "-DVulkan_INCLUDE_DIR=" + os.path.join(vulkan, "include"),
-                "-DVulkan_LIBRARY=" + os.path.join(vulkan, "libvulkan-1.a")]
+        cfg += ["-DCMAKE_RC_COMPILER=" + cm(rc), "-DWWHD_BUNDLED_DEPS=ON", "-DCMAKE_EXE_LINKER_FLAGS=-static",
+                "-DVulkan_INCLUDE_DIR=" + cm(os.path.join(vulkan, "include")),
+                "-DVulkan_LIBRARY=" + cm(os.path.join(vulkan, "libvulkan-1.a"))]
     run(cfg, env)
     log("compiling (the game code is about 1000 large files: 20-90 minutes, once)")
     build = [cmake, "--build", cmake_dir, "--target", "wwhd"]
