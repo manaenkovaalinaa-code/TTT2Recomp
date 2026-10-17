@@ -197,7 +197,26 @@ Mapping Mapping::defaults() {
         key(kY, kVK_ANSI_U); key(kX, kVK_ANSI_I); key(kB, kVK_ANSI_J); key(kA, kVK_ANSI_K, kVK_Space);
         key(kR, kVK_ANSI_O); key(kL, kVK_ANSI_Y); key(kZR, kVK_ANSI_P); key(kZL, kVK_ANSI_H);
         key(kHome, kNoKey);
+        // the arrow keys belong to player 2 (defaults_for); player 1 plays with the first controller
+        key(kDUp, kVK_ANSI_W); key(kDDown, kVK_ANSI_S); key(kDLeft, kVK_ANSI_A); key(kDRight, kVK_ANSI_D);
+        m.controller = 0;
     }
+    return m;
+}
+
+// Player 2 (TTT2): the arrow keys move, the number pad attacks in the same shape as U I / J K
+// (4 5 = left/right punch, 1 2 = left/right kick), 6 = tag, Keypad Enter = +; the second controller.
+Mapping Mapping::defaults_for(int player) {
+    if (player <= 0) return defaults();
+    Mapping m = defaults();
+    for (auto& k : m.keys) k.fill(kNoKey);
+    auto key = [&](int a, int k0, int k1 = kNoKey) { m.keys[a] = {k0, k1}; };
+    key(kDUp, kVK_UpArrow); key(kDDown, kVK_DownArrow); key(kDLeft, kVK_LeftArrow); key(kDRight, kVK_RightArrow);
+    key(kY, kVK_ANSI_Keypad4); key(kX, kVK_ANSI_Keypad5); key(kB, kVK_ANSI_Keypad1); key(kA, kVK_ANSI_Keypad2);
+    key(kR, kVK_ANSI_Keypad6); key(kL, kVK_ANSI_Keypad7); key(kZL, kVK_ANSI_Keypad8); key(kZR, kVK_ANSI_Keypad9);
+    key(kPlus, kVK_ANSI_KeypadEnter); key(kMinus, kVK_ANSI_KeypadPlus);
+    m.face_auto = false;
+    m.controller = 1;
     return m;
 }
 
@@ -591,17 +610,21 @@ std::string to_json(const Mapping& m) {
         o += "    " + quote(action_id(a)) + ": " + (m.pad[a] == kPadNone ? std::string("null") : quote(pad_id(m.pad[a])));
         o += a + 1 < kActionCount ? ",\n" : "\n";
     }
-    char opt[320];
+    char opt[400];
     snprintf(opt, sizeof opt,
              "  },\n  \"options\": {\n    \"format\": 2,\n    \"stick_deadzone\": %.3g,\n"
              "    \"left_stick_range\": %.3g,\n    \"right_stick_range\": %.3g,\n"
-             "    \"invert_camera_y\": %s%s\n  }\n}\n",
+             "    \"invert_camera_y\": %s%s,\n    \"controller\": %s\n  }\n}\n",
              m.deadzone, m.left_range, m.right_range, m.invert_camera_y ? "true" : "false",
-             m.face_auto ? ",\n    \"face_layout\": \"auto\"" : "");
+             m.face_auto ? ",\n    \"face_layout\": \"auto\"" : "",
+             m.controller == kAnyController ? "\"any\"" : m.controller == kNoController ? "\"none\""
+                                            : std::to_string(m.controller).c_str());
     return o + opt;
 }
 
-bool from_json(const std::string& text, Mapping& out, std::string* error) {
+static bool from_json_for(const std::string& text, Mapping& out, std::string* error, int player);
+bool from_json(const std::string& text, Mapping& out, std::string* error) { return from_json_for(text, out, error, 0); }
+static bool from_json_for(const std::string& text, Mapping& out, std::string* error, int player) {
     auto bad = [&](const std::string& e) { if (error) *error = e; return false; };
     Parser ps{text.data(), text.data() + text.size(), {}};
     Json root;
@@ -609,7 +632,7 @@ bool from_json(const std::string& text, Mapping& out, std::string* error) {
     ps.ws();
     if (ps.p != ps.end) return bad("JSON: trailing characters");
     if (root.type != Json::Obj) return bad("JSON: expected an object");
-    Mapping m = Mapping::defaults();
+    Mapping m = Mapping::defaults_for(player);
     std::string warn;
     if (const Json* kb = root.get("keyboard"); kb && kb->type == Json::Obj) {
         for (auto& [id, v] : kb->obj) {
@@ -657,13 +680,19 @@ bool from_json(const std::string& text, Mapping& out, std::string* error) {
         if (const Json* i = op->get("invert_camera_y"); i && i->type == Json::Bool) m.invert_camera_y = i->b;
         // only "automatic" is stored: the two manual presets are the shape of the face bindings
         if (const Json* f = op->get("face_layout"); f && f->type == Json::Str) m.face_auto = f->s == "auto";
+        if (const Json* c = op->get("controller")) {
+            if (c->type == Json::Num) m.controller = std::clamp((int)c->n, 0, 7);
+            else if (c->type == Json::Str) m.controller = c->s == "none" ? kNoController : kAnyController;
+        }
     }
     out = m;
     if (error) *error = warn;
     return true;
 }
 
-bool load_file(const std::string& path, Mapping& out, std::string* error) {
+static bool load_file_for(const std::string& path, Mapping& out, std::string* error, int player);
+bool load_file(const std::string& path, Mapping& out, std::string* error) { return load_file_for(path, out, error, 0); }
+static bool load_file_for(const std::string& path, Mapping& out, std::string* error, int player) {
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) {
         if (error) *error = strerror(errno);
@@ -674,7 +703,7 @@ bool load_file(const std::string& path, Mapping& out, std::string* error) {
     size_t n;
     while ((n = fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, n);
     fclose(f);
-    return from_json(text, out, error);
+    return from_json_for(text, out, error, player);
 }
 
 static void mkdirs(const std::string& dir) {
@@ -695,16 +724,17 @@ bool save_file(const std::string& path, const Mapping& m) {
     return ok;
 }
 
-std::string default_path() {
-    // WWHD_CONTROLS=<file> uses another controls file (tests)
-    if (const char* e = getenv("WWHD_CONTROLS"); e && *e) return e;
-    return host::config_dir() + "/controls.json";
+std::string default_path(int player) {
+    // WWHD_CONTROLS=<file> uses another controls file (tests); player 2: <file>.p2
+    std::string base;
+    if (const char* e = getenv("WWHD_CONTROLS"); e && *e) return player ? std::string(e) + ".p2" : std::string(e);
+    return host::config_dir() + (player ? "/controls_p2.json" : "/controls.json");
 }
 
 // ---- live mapping
 
 static std::mutex g_mu;
-static Mapping g_map = Mapping::defaults();
+static Mapping g_map[kPlayers] = {Mapping::defaults_for(0), Mapping::defaults_for(1)};
 static std::atomic<uint32_t> g_gen{1};
 
 // the dominant pad's labels as note_face_labels last reported them (its own lock: set_current
@@ -743,31 +773,54 @@ void set_face_auto(Mapping& m, bool on) {
 }
 
 void load_startup() {
-    std::string path = default_path(), err;
-    Mapping m;
-    struct stat st;
-    if (stat(path.c_str(), &st) != 0) return;  // no file yet: defaults
-    if (load_file(path, m, &err)) {
-        set_current(m, false);
-        fprintf(stderr, "[input] controls loaded from %s%s%s\n", path.c_str(), err.empty() ? "" : ": ", err.c_str());
-    } else {
-        fprintf(stderr, "[input] %s: %s; using default controls\n", path.c_str(), err.c_str());
+    // (the static defaults were built before the guest build was known: rebuild them)
+    for (int pl = 0; pl < kPlayers; pl++) set_current(Mapping::defaults_for(pl), false, pl);
+    bool have[kPlayers] = {};
+    for (int pl = 0; pl < kPlayers; pl++) {
+        std::string path = default_path(pl), err;
+        Mapping m;
+        struct stat st;
+        if (stat(path.c_str(), &st) != 0) continue;  // no file yet: defaults
+        if (load_file_for(path, m, &err, pl)) {
+            set_current(m, false, pl);
+            have[pl] = true;
+            fprintf(stderr, "[input] player %d controls loaded from %s%s%s\n", pl + 1, path.c_str(), err.empty() ? "" : ": ", err.c_str());
+        } else {
+            fprintf(stderr, "[input] %s: %s; using default controls\n", path.c_str(), err.c_str());
+        }
+    }
+    // first start with two players (TTT2): player 1's saved controls predate player 2, whose default
+    // keys (the arrows) player 1 may still use; those go to player 2, and player 1 takes the first
+    // controller only (before, every controller drove player 1)
+    if (have[0] && !have[1] && std::strcmp(g_guest_build_name, "TTT2") == 0) {
+        Mapping p1 = current(0);
+        const Mapping p2 = current(1);
+        for (auto& slots : p1.keys)
+            for (int& k : slots)
+                for (auto& s2 : p2.keys)
+                    for (int k2 : s2)
+                        if (k != kNoKey && k == k2) k = kNoKey;
+        if (p1.controller == kAnyController) p1.controller = 0;
+        set_current(p1, true, 0);
+        set_current(p2, true, 1);
+        fprintf(stderr, "[input] player 2 set up: arrow keys and the number pad, the second controller\n");
     }
 }
 
-Mapping current() {
+Mapping current(int player) {
     std::lock_guard<std::mutex> lk(g_mu);
-    return g_map;
+    return g_map[std::clamp(player, 0, kPlayers - 1)];
 }
 
-void set_current(const Mapping& m, bool save) {
+void set_current(const Mapping& m, bool save, int player) {
+    player = std::clamp(player, 0, kPlayers - 1);
     {
         std::lock_guard<std::mutex> lk(g_mu);
-        g_map = m;
+        g_map[player] = m;
     }
     g_gen++;
-    if (save && !save_file(default_path(), m))
-        fprintf(stderr, "[input] could not save controls to %s\n", default_path().c_str());
+    if (save && !save_file(default_path(player), m))
+        fprintf(stderr, "[input] could not save controls to %s\n", default_path(player).c_str());
 }
 
 uint32_t generation() { return g_gen.load(); }

@@ -632,6 +632,9 @@ static std::atomic<bool> g_pro{getenv("WWHD_PRO_CONTROLLER") != nullptr};
 bool pro_controller() { return g_pro.load(std::memory_order_relaxed); }
 void set_pro_controller(bool on) { g_pro = on; LOG("[input] keyboard/controller act as %s", on ? "Pro Controller" : "GamePad"); }
 
+PadState read_player(int player) { return player <= 0 ? read() : PadState{}; }  // one player here
+bool player_active(int player) { return player <= 0; }
+std::vector<std::string> controller_names() { return {}; }
 PadState read() {
     static const std::vector<Press> script = scripted();
     static const std::vector<Stick> sticks = scripted_stick();

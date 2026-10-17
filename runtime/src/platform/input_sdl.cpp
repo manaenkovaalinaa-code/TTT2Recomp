@@ -28,6 +28,7 @@ namespace gx2 { void checkpoint_vulkan_caches(); }
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include "guest_addr.h"
 #include <deque>
 #include <map>
 #include <mutex>
@@ -42,7 +43,8 @@ namespace mods { void filter_pad(input::PadState&); }
 namespace input {
 static std::mutex g_mu;
 static bool g_keys[256]={},g_script_keys[256]={};
-static PadState g_pad;
+static std::vector<std::string> g_names;  // connected controllers in connect order (g_mu)
+static PadState g_pad,g_pad2;  // players 1 and 2 (input_map::current(0/1)) from their controllers
 static float g_values[input_map::kPadCount]={};
 static bool g_touch=false;static float g_tx=0,g_ty=0;
 static std::map<SDL_JoystickID,SDL_Gamepad*> g_controllers;
@@ -211,7 +213,7 @@ static bool overlay_event(const SDL_Event& event){
  default:return false;
  }
 }
-static PadState keyboard_state(bool host){bool keys[256];for(int i=0;i<256;i++)keys[i]=(host&&g_keys[i])||g_script_keys[i];return input_map::keyboard_state(input_map::current(),keys);}
+static PadState keyboard_state(bool host,int player=0){bool keys[256];for(int i=0;i<256;i++)keys[i]=(host&&g_keys[i])||(player==0&&g_script_keys[i]);return input_map::keyboard_state(input_map::current(player),keys);}
 // ---- rumble -----------------------------------------------------------------------------------
 // The game's requests (VPADControlMotor / WPADControlMotor in runtime/src/hle) are kept by
 // rumble.h; update() sets the motors from them on the main thread, with the rest of the input. A
@@ -575,9 +577,19 @@ void update(){
  }
  post_test_keys();
  float v[input_map::kPadCount]={};using namespace input_map;
- auto put=[&](int p,float x){v[p]=std::max(v[p],x);};
- for(auto [id,pad]:g_controllers){
+ // per player: the controller its mapping names (kAnyController: all, n: the n-th connected one in
+ // connect order, kNoController: none); v (all controllers) is what the settings overlay shows
+ float pv[kPlayers][kPadCount]={};
+ const Mapping maps[kPlayers]={current(0),current(1)};
+ float* vc=nullptr;
+ auto put=[&](int p,float x){v[p]=std::max(v[p],x);vc[p]=std::max(vc[p],x);};
+ int slot=0;std::vector<std::string> names;
+ for(SDL_JoystickID cid:g_order){
+  auto it=g_controllers.find(cid);if(it==g_controllers.end())continue;
+  SDL_Gamepad* pad=it->second;
   if(!SDL_GamepadConnected(pad))continue;
+  float one[kPadCount]={};vc=one;
+  const char* nm=SDL_GetGamepadName(pad);names.push_back(nm&&*nm?nm:"Controller");
   auto button=[&](SDL_GamepadButton b,int p){put(p,SDL_GetGamepadButton(pad,b)?1.f:0.f);};
   button(SDL_GAMEPAD_BUTTON_SOUTH,kPadA);button(SDL_GAMEPAD_BUTTON_EAST,kPadB);button(SDL_GAMEPAD_BUTTON_WEST,kPadX);button(SDL_GAMEPAD_BUTTON_NORTH,kPadY);
   button(SDL_GAMEPAD_BUTTON_LEFT_SHOULDER,kPadLB);button(SDL_GAMEPAD_BUTTON_RIGHT_SHOULDER,kPadRB);
@@ -587,12 +599,17 @@ void update(){
   put(kPadLT,std::max(0.f,SDL_GetGamepadAxis(pad,SDL_GAMEPAD_AXIS_LEFT_TRIGGER)/32767.f));put(kPadRT,std::max(0.f,SDL_GetGamepadAxis(pad,SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)/32767.f));
   auto stick=[&](SDL_GamepadAxis ax,SDL_GamepadAxis ay,int up,int down,int left,int right){float x=SDL_GetGamepadAxis(pad,ax)/32768.f,y=SDL_GetGamepadAxis(pad,ay)/32768.f;put(right,std::max(x,0.f));put(left,std::max(-x,0.f));put(up,std::max(-y,0.f));put(down,std::max(y,0.f));};
   stick(SDL_GAMEPAD_AXIS_LEFTX,SDL_GAMEPAD_AXIS_LEFTY,kPadLSUp,kPadLSDown,kPadLSLeft,kPadLSRight);stick(SDL_GAMEPAD_AXIS_RIGHTX,SDL_GAMEPAD_AXIS_RIGHTY,kPadRSUp,kPadRSDown,kPadRSLeft,kPadRSRight);
+  for(int pl=0;pl<kPlayers;pl++)
+   if(maps[pl].controller==kAnyController||maps[pl].controller==slot)
+    for(int p=0;p<kPadCount;p++)pv[pl][p]=std::max(pv[pl][p],one[p]);
+  slot++;
  }
- auto state=input_map::controller_state(input_map::current(),v);
+ auto state=input_map::controller_state(maps[0],pv[0]);
+ auto state2=input_map::controller_state(maps[1],pv[1]);
  // + went down: the view may switch to the GamePad screen while the game is paused
  // (not while the settings overlay or the text prompt takes the buttons: Start acts there)
  {static bool plus=false;const bool now=(state.buttons&input::kPlus)!=0;if(now&&!plus&&!overlay::blocks_input())gfx::display_plus_pressed();plus=now;}
- std::lock_guard lk(g_mu);std::copy(std::begin(v),std::end(v),g_values);g_pad=state;
+ std::lock_guard lk(g_mu);std::copy(std::begin(v),std::end(v),g_values);g_pad=state;g_pad2=state2;g_names=std::move(names);
  if(!overlay::blocks_input()&&!getenv("WWHD_NO_HOST_INPUT")){motion::poll_recalibrate(v,g_keys);screenshot::poll_controller(v);}
 }
 void prompt_text(const std::u16string& initial,int max_len,std::function<void(bool,std::u16string)> done){std::lock_guard lk(g_mu);g_initial=initial;g_pending_max_len=std::max(0,max_len);if(g_initial.size()>(size_t)g_pending_max_len)g_initial.resize(g_pending_max_len);g_pending=std::move(done);}
@@ -777,6 +794,32 @@ static std::atomic<bool> g_pro{getenv("WWHD_PRO_CONTROLLER") != nullptr};
 bool pro_controller() { return g_pro.load(std::memory_order_relaxed); }
 void set_pro_controller(bool on) { g_pro = on; LOG("[input] keyboard/controller act as %s", on ? "Pro Controller" : "GamePad"); }
 
+std::vector<std::string> controller_names(){std::lock_guard lk(g_mu);return g_names;}
+// player 2 (TTT2's second Pro Controller): its keys and its controller; no test scripts or mods
+PadState read_player(int player) {
+    if (player <= 0) return read();
+    static const bool no_host = getenv("WWHD_NO_HOST_INPUT") != nullptr;
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (no_host) return PadState{};
+    PadState k = keyboard_state(true, player), s = g_pad2;
+    s.buttons |= k.buttons;
+    if (k.lx || k.ly) { s.lx = k.lx; s.ly = k.ly; }
+    if (k.rx || k.ry) { s.rx = k.rx; s.ry = k.ry; }
+    if (overlay::blocks_input()) s = PadState{};
+    return s;
+}
+// whether player 2 can play: something drives it (a key bound, or its controller is connected)
+bool player_active(int player) {
+    if (player <= 0) return true;
+    if (std::strcmp(g_guest_build_name, "TTT2") != 0) return false;
+    const input_map::Mapping m = input_map::current(player);
+    for (auto& slots : m.keys)
+        for (int k : slots)
+            if (k != input_map::kNoKey) return true;
+    if (m.controller == input_map::kNoController) return false;
+    const size_t n = controller_names().size();
+    return m.controller == input_map::kAnyController ? n > 0 : (int)n > m.controller;
+}
 PadState read() {
     static const std::vector<Press> script = scripted();
     static const std::vector<Stick> sticks = scripted_stick();

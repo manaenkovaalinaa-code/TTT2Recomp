@@ -188,6 +188,7 @@ struct Ui {
     bool linearized = false;
     bool just_opened = false;
     bool list_view = false;  // Controls: the table instead of the drawing
+    int player = 0;          // Controls: the player whose bindings are shown (TTT2: 1 or 2)
     int hover_action = -1;   // Controls: input under the cursor (status line)
 };
 Ui U;
@@ -1663,16 +1664,16 @@ void start_capture(int a, int col) {
 }
 
 void clear_binding(int a, int col) {
-    input_map::Mapping m = input_map::current();
+    input_map::Mapping m = input_map::current(U.player);
     if (col == kColPad) input_map::set_pad_binding(m, a, input_map::kPadNone);
     else m.keys[a][col] = input_map::kNoKey;
-    input_map::set_current(m);
+    input_map::set_current(m, true, U.player);
 }
 
 void apply_capture() {
     if (U.cap_action < 0) return;
     using namespace input_map;
-    input_map::Mapping m = input_map::current();
+    input_map::Mapping m = input_map::current(U.player);
     const int a = U.cap_action, colm = U.cap_col;
     int code = g_capture_key.exchange(-2);
     bool done = false;
@@ -1680,13 +1681,13 @@ void apply_capture() {
     else if (code == -3) {         // Backspace / Delete: clear
         if (colm == kColPad) set_pad_binding(m, a, kPadNone);
         else m.keys[a][colm == kColAny ? 0 : colm] = kNoKey;
-        input_map::set_current(m);
+        input_map::set_current(m, true, U.player);
         done = true;
     } else if (code >= 0 && colm != kColPad) {
         if (const char* r = input_map::reserved_key(code)) U.cap_note = std::string("That key is used for ") + r;
         else {
             m.keys[a][colm == kColAny ? 0 : colm] = code;
-            input_map::set_current(m);
+            input_map::set_current(m, true, U.player);
             done = true;
         }
     }
@@ -1703,7 +1704,7 @@ void apply_capture() {
         else if (pressed > 0) {
             if (colm == kColPad || colm == kColAny) {
                 set_pad_binding(m, a, pressed);
-                input_map::set_current(m);
+                input_map::set_current(m, true, U.player);
             }
             done = true;  // (key slots: any controller input cancels)
             g_pad_b_used = true;  // issue #111: the input just assigned (B too) does not also close the menu this frame
@@ -1880,7 +1881,50 @@ void gyro_window(bool& open) {
 
 void tab_controls() {
     bool v;
-    input_map::Mapping m = input_map::current();
+    // TTT2: two players (two Pro Controllers), each with its own keys and controller
+    const bool twoPlayers = std::strcmp(g_guest_build_name, "TTT2") == 0 && input::pro_controller();
+    if (!twoPlayers) U.player = 0;
+    if (twoPlayers) {
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Player");
+        ImGui::SameLine();
+        if (radio("1", U.player == 0)) { U.player = 0; U.cap_action = -1; }
+        ImGui::SameLine();
+        if (radio("2", U.player == 1)) { U.player = 1; U.cap_action = -1; }
+        ImGui::SameLine(0, 24);
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextUnformatted("Controller");
+        ImGui::SameLine();
+        input_map::Mapping pm = input_map::current(U.player);
+        const std::vector<std::string> names = input::controller_names();
+        auto label = [&](int c) -> std::string {
+            if (c == input_map::kNoController) return "none (keyboard only)";
+            if (c == input_map::kAnyController) return "all controllers";
+            std::string l = "controller " + std::to_string(c + 1);
+            l += c < (int)names.size() ? ": " + names[c] : " (not connected)";
+            return l;
+        };
+        ImGui::SetNextItemWidth(320);
+        if (ImGui::BeginCombo("##player_controller", label(pm.controller).c_str())) {
+            const int count = std::max<int>(2, (int)names.size());
+            for (int c = -1; c < count; c++) {
+                if (ImGui::Selectable(label(c).c_str(), pm.controller == c)) {
+                    pm.controller = c;
+                    input_map::set_current(pm, true, U.player);
+                }
+            }
+            ImGui::EndCombo();
+        }
+        help("Which game controller plays as this player, in the order they were connected. Player 1 "
+             "defaults to the first controller and player 2 to the second; with one controller, set "
+             "player 1 to 'none' to play player 1 on the keyboard and player 2 on the controller. "
+             "Player 2's default keys: arrows move, Num 4/5 punch, Num 1/2 kick, Num 6 tag, Num Enter is +.");
+        if (U.player == 1 && !input::player_active(1)) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(player 2 has no keys and no controller: not connected)");
+        }
+    }
+    input_map::Mapping m = input_map::current(U.player);
     // top: which controller the keyboard and controllers act as (the drawing follows), view switch
     const bool pro = input::pro_controller();
     ImGui::AlignTextToFramePadding();
@@ -1904,18 +1948,18 @@ void tab_controls() {
     if (radio(input_map::face_layout_label(input_map::FaceLayout::kPosition),
               !m.face_auto && fl == input_map::FaceLayout::kPosition)) {
         input_map::apply_face_layout(m, input_map::FaceLayout::kPosition);
-        input_map::set_current(m);
+        input_map::set_current(m, true, U.player);
     }
     ImGui::SameLine();
     if (radio(input_map::face_layout_label(input_map::FaceLayout::kLabels),
               !m.face_auto && fl == input_map::FaceLayout::kLabels)) {
         input_map::apply_face_layout(m, input_map::FaceLayout::kLabels);
-        input_map::set_current(m);
+        input_map::set_current(m, true, U.player);
     }
     ImGui::SameLine();
     if (radio("automatic", m.face_auto)) {
         input_map::set_face_auto(m, true);
-        input_map::set_current(m);
+        input_map::set_current(m, true, U.player);
     }
     help("How the controller's face buttons drive the Wii U's A/B/X/Y. By position: the bottom "
          "button is B (Nintendo layout). By label: the button named A is A — on an Xbox pad that "
@@ -1998,14 +2042,14 @@ void tab_controls() {
     ImGui::SetNextItemWidth(200);
     if (ImGui::SliderFloat("Stick dead zone", &dz, 0.0f, 90.0f, "%.0f%%")) {
         m.deadzone = std::clamp(dz / 100.0f, 0.0f, 0.9f);
-        input_map::set_current(m);
+        input_map::set_current(m, true, U.player);
     }
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Default: 15%%. Filters resting-stick drift on both sticks.");
     ImGui::SameLine(0, 24);
     if (check("Invert camera up/down", m.invert_camera_y, &v)) {
         m.invert_camera_y = v;
-        input_map::set_current(m);
+        input_map::set_current(m, true, U.player);
     }
     ImGui::SameLine(0, 24);
     // issue #35: a way to keep the controller motors still (saved; WWHD_RUMBLE=0 starts with it off)
@@ -2025,7 +2069,7 @@ void tab_controls() {
     }
     gyro_window(gyro_open);
     ImGui::SameLine(0, 24);
-    if (ImGui::Button("Reset to defaults")) input_map::set_current(input_map::Mapping::defaults());
+    if (ImGui::Button("Reset to defaults")) input_map::set_current(input_map::Mapping::defaults_for(U.player), true, U.player);
     // issue #40: per-stick range, applied after the dead zone (live, saved with the controls)
     float* ranges[2] = {&m.left_range, &m.right_range};
     const char* const labels[2] = {"Left stick range", "Right stick range"};
@@ -2035,7 +2079,7 @@ void tab_controls() {
         ImGui::SetNextItemWidth(200);
         if (ImGui::SliderFloat(labels[k], &r, input_map::kMinStickRange * 100.0f, input_map::kMaxStickRange * 100.0f, "%.0f%%")) {
             *ranges[k] = std::clamp(std::round(r) / 100.0f, input_map::kMinStickRange, input_map::kMaxStickRange);
-            input_map::set_current(m);
+            input_map::set_current(m, true, U.player);
         }
         help("Default: 100% (no change). Scales the stick after the dead zone so a short stick reaches full deflection.");
     }

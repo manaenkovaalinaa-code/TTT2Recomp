@@ -1,7 +1,8 @@
 #include <algorithm>
 #include "mods/mods.h"
-// padscore: Wii Remote / Pro Controller (WPAD, KPAD). Only a Pro Controller on channel 0 exists,
-// and only while the keyboard/host controllers are set to act as one (Input menu). Struct layouts
+// padscore: Wii Remote / Pro Controller (WPAD, KPAD). Pro Controllers on channel 0 (player 1) and,
+// for TTT2's versus mode, channel 1 (player 2: its own keys and controller, input::read_player),
+// only while the keyboard/host controllers are set to act as Pro Controllers (Input menu). Struct layouts
 // and constants follow Cemu's padscore.
 #include "../crashrec.h"
 #include "../runtime.h"
@@ -16,7 +17,10 @@ constexpr int32_t kWpadErrNone = 0, kWpadErrNoController = -1;
 constexpr int32_t kKpadErrNone = 0, kKpadErrNoController = -2;
 constexpr uint8_t kDevURCC = 31, kDevNone = 253, kFormatURCC = 22;
 
-bool connected(uint32_t chan) { return chan == 0 && input::pro_controller(); }
+bool connected(uint32_t chan) {
+    if (!input::pro_controller()) return false;
+    return chan == 0 || (chan == 1 && input::player_active(1));
+}
 
 // VPAD button bits (input::PadState) -> Pro Controller (URCC) bits
 uint32_t pro_buttons(uint32_t v) {
@@ -73,18 +77,24 @@ HLE(padscore, KPADReadEx) {
         ret(c, 0);
         return;
     }
-    static uint32_t last = 0;
-    static input::PadState last_p;
+    static uint32_t lasts[2] = {};
+    static input::PadState last_ps[2];
+    const int pl = chan == 0 ? 0 : 1;
+    uint32_t& last = lasts[pl];
+    input::PadState& last_p = last_ps[pl];
     const bool repeat = interp::repeat_input();
-    input::PadState p = repeat ? last_p : crashrec::read(1);  // see interp.cpp; crash recovery records/replays it
+    // player 1: crash recovery records/replays it (interp.cpp); player 2 reads its own controls
+    input::PadState p = repeat ? last_p : pl == 0 ? crashrec::read(1) : input::read_player(1);
     if (repeat && interp::fresh_sticks()) {  // true 60: sticks every pass, buttons on full passes
-        input::PadState f = input::read();
+        input::PadState f = input::read_player(pl);
         p.lx = f.lx; p.ly = f.ly; p.rx = f.rx; p.ry = f.ry;
     }
     last_p = p;
-    mods::move_speed_input(p.buttons);
-    mods::fast_forward_input(p.buttons);
-    if (!repeat) motion::right_stick(p.rx, p.ry);  // the Pro Controller's stick decides gyro use too (motion.h)
+    if (pl == 0) {
+        mods::move_speed_input(p.buttons);
+        mods::fast_forward_input(p.buttons);
+        if (!repeat) motion::right_stick(p.rx, p.ry);  // the Pro Controller's stick decides gyro use too (motion.h)
+    }
     uint32_t hold = pro_buttons(p.buttons);
     // stick-as-button bits (WPAD_PRO_STICK_*_EMULATION, wut), with hysteresis: TTT2 moves the fighter
     // with these, not with the stick values
@@ -141,7 +151,7 @@ static void wpad_fill(uint32_t chan, uint32_t st) {
         st8(st + 0x29, (uint8_t)(int8_t)kWpadErrNoController);
         return;
     }
-    input::PadState p = input::read();
+    input::PadState p = input::read_player(chan == 0 ? 0 : 1);
     uint32_t hold = pro_buttons(p.buttons);
     auto bit = [&](float v, uint32_t b) { if (v >= 0.5f) hold |= b; };
     bit(p.ly, 0x00200000); bit(-p.ly, 0x00100000); bit(-p.lx, 0x00040000); bit(p.lx, 0x00080000);

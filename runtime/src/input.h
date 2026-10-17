@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace input {
 
@@ -31,6 +32,12 @@ void set_pro_controller(bool on);
 
 void init();       // main thread, after NSApplication exists
 PadState read();   // any thread
+// TTT2's two players: read_player(0) is read(); player 1 (the second Pro Controller) has its own
+// mapping (input_map::current(1)) and controller. Not every host has a second player (the AppKit
+// host: none).
+PadState read_player(int player);
+bool player_active(int player);
+std::vector<std::string> controller_names();  // connected controllers in connect order (main thread)
 void release_keys();                // forget held keys (another window took the keyboard)
 void controller_values(float* v);   // main thread: input_map::kPadCount host controller inputs, 0..1
 void host_controller_values(float* v);  // any thread: the latest controller_values (settings overlay)

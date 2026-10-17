@@ -53,6 +53,11 @@ int key_from_id(const std::string& id);  // kNoKey if unknown
 // Controls window reserves (Escape cancels a capture). Returns what the key does, or nullptr.
 const char* reserved_key(int code);
 
+constexpr int kAnyController = -2, kNoController = -1;
+// Two players (TTT2's versus mode): player 1 is the GamePad / Pro Controller 1, player 2 a second
+// Pro Controller (padscore channel 1). Each has its own mapping and its own controls file.
+constexpr int kPlayers = 2;
+
 constexpr float kMinStickRange = 1.0f, kMaxStickRange = 1.5f;
 
 struct Mapping {
@@ -69,7 +74,11 @@ struct Mapping {
     float right_range = 1.0f;
     bool invert_camera_y = false;   // right stick Y, keyboard and controller
     bool face_auto = false;         // Automatic face preset: follow the dominant pad's labels
-    static Mapping defaults();
+    // which host controller drives this player: kAnyController (all of them), kNoController, or the
+    // n-th connected controller (0 = the first one plugged in)
+    int controller = kAnyController;
+    static Mapping defaults();                 // player 1
+    static Mapping defaults_for(int player);   // player 1 or 2
     bool operator==(const Mapping&) const = default;
 };
 
@@ -145,12 +154,13 @@ std::string to_json(const Mapping& m);
 bool from_json(const std::string& text, Mapping& out, std::string* error = nullptr);
 bool load_file(const std::string& path, Mapping& out, std::string* error = nullptr);
 bool save_file(const std::string& path, const Mapping& m);
-std::string default_path();
+std::string default_path(int player = 0);
 
 // The live mapping (thread safe). load_startup() reads default_path() if it exists.
 void load_startup();
-Mapping current();
-void set_current(const Mapping& m, bool save = true);  // applies immediately; saves to default_path()
+Mapping current(int player = 0);
+// applies immediately; saves to default_path(player)
+void set_current(const Mapping& m, bool save = true, int player = 0);
 uint32_t generation();  // bumps on every set_current
 
 }  // namespace input_map
