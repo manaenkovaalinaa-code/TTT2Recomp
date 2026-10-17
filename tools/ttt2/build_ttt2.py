@@ -120,6 +120,38 @@ def run(cmd, env=None):
         sys.exit("failed (exit code %d): %s" % (r.returncode, cmd[0]))
 
 
+def make_icon(game, path):
+    """The game's own HOME-menu icon (meta/iconTex.tga, 128x128) as a Windows .ico with a PNG inside."""
+    import struct, zlib
+    try:
+        data = open(os.path.join(game, "meta", "iconTex.tga"), "rb").read()
+        idlen, cmtype, itype = data[0], data[1], data[2]
+        w, h, bpp, desc = struct.unpack("<HHBB", data[12:18])
+        if itype != 2 or cmtype or bpp not in (24, 32):
+            return False
+        px = bpp // 8
+        off = 18 + idlen
+        rows = []
+        for y in range(h):
+            sy = y if desc & 0x20 else h - 1 - y  # bit 5: rows stored top-down
+            row = bytearray(b"\0")
+            src = data[off + sy * w * px: off + (sy + 1) * w * px]
+            for x in range(w):
+                b, g, r = src[x * px], src[x * px + 1], src[x * px + 2]
+                row += bytes((r, g, b, src[x * px + 3] if px == 4 else 255))
+            rows.append(bytes(row))
+        def chunk(t, d):
+            return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+        png = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 6, 0, 0, 0))
+               + chunk(b"IDAT", zlib.compress(b"".join(rows), 9)) + chunk(b"IEND", b""))
+        ico = struct.pack("<HHH", 0, 1, 1) + struct.pack("<BBBBHHII", w & 255, h & 255, 0, 0, 1, 32, len(png), 22) + png
+        with open(path, "wb") as f:
+            f.write(ico)
+        return True
+    except (OSError, IndexError, struct.error):
+        return False
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--game", required=True, help="the extracted game folder (code, content, meta)")
@@ -195,6 +227,7 @@ def main():
     for dll in ("SDL3.dll",):
         if os.path.exists(os.path.join(cmake_dir, dll)):
             shutil.copy2(os.path.join(cmake_dir, dll), out)
+    make_icon(game, os.path.join(out, "TTT2.ico"))
     with open(os.path.join(out, "portable.txt"), "w", encoding="utf-8") as f:
         f.write("Portable: saves, settings, shader caches and logs stay in this folder.\n")
     if WINDOWS:

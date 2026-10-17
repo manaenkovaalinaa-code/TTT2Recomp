@@ -34,14 +34,19 @@ natively, and GX2 graphics go straight to Vulkan. There is no emulator at run ti
 
 1. Скачайте репозиторий: зелёная кнопка **Code → Download ZIP**, распакуйте (путь лучше без кириллицы
    и пробелов, например `C:\TTT2Recomp`). Или `git clone`.
-2. Запустите `tools\ttt2\build-windows.bat`. Перетащите в окно папку с игрой и нажмите Enter.
-3. Скрипт сам скачает всё нужное в папку `.tools` (компилятор llvm-mingw, CMake, Ninja и, если
-   Python не установлен, Python), проверит SHA-256 и соберёт игру. Права администратора не нужны.
-   Перевод кода занимает 10–20 минут, компиляция — от 20 до 90 минут, один раз.
-4. Готовая игра: `build-ttt2\TTT2-port`. Запуск — `run_TTT2.bat`. Папку `TTT2-port` можно перенести
-   куда угодно. Сохранения и настройки лежат в ней же.
+2. Запустите **`Setup-TTT2.bat`** в корне папки. Откроется окно установки: выберите папку с игрой
+   (или перетащите её в окно), при желании — папку для сборки, и нажмите **«Собрать игру»**.
+3. Установщик проверит игру, сам скачает всё нужное в папку `.tools` (компилятор llvm-mingw, CMake,
+   Ninja и, если Python не установлен, Python), проверит SHA-256 и соберёт игру. Права администратора
+   не нужны. Перевод кода занимает 10–20 минут, компиляция — от 20 до 90 минут, один раз. Ход сборки
+   виден в окне, полный лог — в `build-ttt2\setup.log`.
+4. В конце на рабочем столе появится ярлык **Tekken Tag Tournament 2**, а в окне — кнопка **«Играть»**.
+   Готовая игра лежит в `build-ttt2\TTT2-port`; эту папку можно перенести куда угодно, сохранения и
+   настройки лежат в ней же.
 
-Если что-то пошло не так, запустите `build-windows.bat` ещё раз: готовые шаги повторно не выполняются.
+Без окна, в консоли: `tools\ttt2\build-windows.bat` (перетащите папку с игрой и нажмите Enter).
+
+Если что-то пошло не так, нажмите «Собрать игру» ещё раз: готовые шаги повторно не выполняются.
 Полностью заново: `python tools\ttt2\build_ttt2.py --game "ПАПКА_ИГРЫ" --clean`.
 
 ### Управление
@@ -93,11 +98,16 @@ game is built locally from your copy.
 ### Build (Windows)
 
 1. **Code → Download ZIP** and unzip it (a short path without spaces is best, e.g. `C:\TTT2Recomp`), or `git clone`.
-2. Run `tools\ttt2\build-windows.bat` and drag the game folder into the window.
-3. It downloads pinned tools into `.tools` (llvm-mingw, CMake, Ninja, and Python if none is
-   installed), checks their SHA-256 and builds. No administrator rights are needed. Translation
-   takes 10–20 minutes and compiling 20–90 minutes, once.
-4. The game is in `build-ttt2\TTT2-port`. Start `run_TTT2.bat`. The folder is portable.
+2. Run **`Setup-TTT2.bat`** in the folder's root. In its window pick the game folder (or drag it onto
+   the window) and press **Build the game**.
+3. It checks the game, downloads pinned tools into `.tools` (llvm-mingw, CMake, Ninja, and Python if
+   none is installed), checks their SHA-256 and builds. No administrator rights are needed.
+   Translation takes 10–20 minutes and compiling 20–90 minutes, once. The full log is in
+   `build-ttt2\setup.log`.
+4. A **Tekken Tag Tournament 2** shortcut appears on the desktop, and the window offers **Play**. The
+   game is in `build-ttt2\TTT2-port`; the folder is portable.
+
+Console only: `tools\ttt2\build-windows.bat` (drag the game folder in and press Enter).
 
 Linux (experimental): install the Linux build dependencies listed in [README.WWHD.md](README.WWHD.md),
 then `python3 tools/ttt2/build_ttt2.py --game /path/to/game`.
