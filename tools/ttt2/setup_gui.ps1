@@ -55,15 +55,18 @@ $FontB   = New-Object Drawing.Font('Segoe UI Semibold', 10.5)
 $FontH   = New-Object Drawing.Font('Segoe UI Semibold', 18)
 $FontMono = New-Object Drawing.Font('Consolas', 9)
 
-function New-Label($text, $x, $y, $w, $h, $font = $Font, $color = $Text) {
+# (parameters must not be named like the colour and font variables above: PowerShell names ignore case)
+function New-Label($caption, $x, $y, $w, $h, $useFont = $null, $useColor = $null) {
+    if (-not $useFont) { $useFont = $script:Font }
+    if (-not $useColor) { $useColor = $script:Text }
     $l = New-Object Windows.Forms.Label
-    $l.Text = $text; $l.Location = New-Object Drawing.Point($x, $y); $l.Size = New-Object Drawing.Size($w, $h)
-    $l.Font = $font; $l.ForeColor = $color; $l.BackColor = [Drawing.Color]::Transparent
+    $l.Text = $caption; $l.Location = New-Object Drawing.Point($x, $y); $l.Size = New-Object Drawing.Size($w, $h)
+    $l.Font = $useFont; $l.ForeColor = $useColor; $l.BackColor = [Drawing.Color]::Transparent
     $l
 }
-function New-Button($text, $x, $y, $w, $h, [bool]$primary = $false) {
+function New-Button($caption, $x, $y, $w, $h, [bool]$primary = $false) {
     $b = New-Object Windows.Forms.Button
-    $b.Text = $text; $b.Location = New-Object Drawing.Point($x, $y); $b.Size = New-Object Drawing.Size($w, $h)
+    $b.Text = $caption; $b.Location = New-Object Drawing.Point($x, $y); $b.Size = New-Object Drawing.Size($w, $h)
     $b.FlatStyle = 'Flat'; $b.Font = if ($primary) { $FontB } else { $Font }
     $b.ForeColor = $Text; $b.Cursor = [Windows.Forms.Cursors]::Hand
     $b.BackColor = if ($primary) { $Accent } else { $Field }
