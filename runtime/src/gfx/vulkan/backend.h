@@ -196,6 +196,7 @@ struct Renderer {
  size_t activeSubmission=0;
  Screen tv,drc;
  std::unordered_multimap<uint32_t,std::unique_ptr<Surface>> surfaces;
+ std::vector<Surface*> smallTargets; // TTT2: small tiled colour targets the CPU reads (auto exposure), written back asynchronously
  std::vector<Surface*> linearTargets; // linear-aligned colour surfaces (never removed, like surfaces): GX2DrawDone write-back
 };
 extern Renderer R;
@@ -217,6 +218,11 @@ Buffer create_buffer(VkDeviceSize size,VkBufferUsageFlags usage,VkMemoryProperty
                      VkMemoryPropertyFlags preferred=0);
 // host-visible TRANSFER_DST buffer the CPU reads back, host-cached where available
 Buffer create_readback_buffer(VkDeviceSize size);
+// TTT2 diagnostics (WWHD_FRAME_TRACE, draw.cpp / capture.cpp)
+void dump_surface_raw(Surface& s, const std::string& path);
+void frame_trace_arm();  // at a capture request: trace the next frame
+void frame_trace_end();
+void write_back_small_targets();  // TTT2 auto exposure (surfaces.cpp), at GX2DrawDone and each swap  // at the swap: the traced frame's last targets
 void streamout_flush();  // stream out results to guest memory (draw.cpp)
 void dump_surface_image(Surface* img, const char* tag);  // diagnostics (surfaces.cpp)
 UploadSlice allocate_upload(VkDeviceSize size,VkDeviceSize alignment);

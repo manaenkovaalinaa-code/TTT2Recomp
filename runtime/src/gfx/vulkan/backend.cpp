@@ -2360,7 +2360,9 @@ static void frame_dumps(uint64_t frame) {
   // scripts it when WWHD_CAPTURE_PATH is not used); the Metal renderer also writes a draw log
   static const uint64_t scripted = getenv("WWHD_CAPTURE") && !getenv("WWHD_CAPTURE_PATH")
                                        ? strtoull(getenv("WWHD_CAPTURE"), nullptr, 10) : ~0ull;
+  frame_trace_end();
   if (captureRequested.exchange(false) || frame == scripted) {
+    frame_trace_arm();
     char dir[64];
     time_t t = time(nullptr);
     strftime(dir, sizeof dir, "captures/%Y%m%d-%H%M%S", localtime(&t));
@@ -2588,6 +2590,7 @@ void swap() {
     }
   }
 #endif
+  write_back_small_targets();
   service_captures();
   frame_dumps(R.frame + 1);
   // the layout of both pictures (GamePad window, picture-in-picture, automatic overlay, GamePad only)

@@ -1,3 +1,4 @@
+#include "guest_addr.h"
 #include <filesystem>
 #include "deferred_dispatch.h"
 #include "../../exception_report.h"
@@ -1130,6 +1131,14 @@ Surface* find_or_create_surface(const SurfaceDesc& d,bool forRendering) {
         }
     }
     if(!raw->isDepth&&static_cast<Latte::E_HWTILEMODE>(raw->tileMode)==Latte::E_HWTILEMODE::TM_LINEAR_ALIGNED)R.linearTargets.push_back(raw);
+    // TTT2's auto exposure: the scene is reduced to one pixel of a 64x64 target, which the CPU reads to set the
+    // brightness of the frame (without it, bright stages wash out). Small tiled colour targets go back to guest memory.
+    else if(forRendering&&!raw->isDepth&&!raw->fmt.depth&&raw->width*raw->height<=64*64&&std::strcmp(g_guest_build_name,"TTT2")==0)
+    {
+        R.smallTargets.push_back(raw);
+        static int logged=0;
+        if(logged++<8)LOG("[vulkan] small target %08X %ux%u format %X tile mode %u: written back for the CPU",raw->addr,raw->width,raw->height,raw->format,raw->tileMode);
+    }
     return forRendering?adopt_newer_alias(raw):raw;
 }
 static uint32_t mip_base(Surface* s,uint32_t level) {
@@ -1390,6 +1399,7 @@ static void write_back_linear_copy(Surface* img,uint32_t layer,GX2Surface* d,uin
 // GX2DrawDone: linear render targets drawn since their last write-back
 void write_back_linear_targets() {
     streamout_flush();
+    write_back_small_targets();
     const uint64_t t0=rprof::now_ns();uint64_t readNs=0,bytesDone=0;uint32_t count=0;
     // linear aligned only: a tile mode of 0 can also be GX2's "default" (a tiled copy destination)
     for(Surface* s:R.linearTargets) {
@@ -1405,6 +1415,38 @@ void write_back_linear_targets() {
         readNs+=rprof::now_ns()-r0;bytesDone+=texels.size();++count;
     }
     rprof::add_write_back(std::max<uint64_t>(1,rprof::now_ns()-t0-readNs),count,bytesDone,readNs);
+}
+// TTT2: small tiled render targets the CPU reads (R.smallTargets), copied back without waiting for the GPU: the
+// guest memory gets them when the submission completes (a frame later at most, enough for auto exposure). An image
+// at the internal resolution is sampled at the guest texel's corner (these targets hold flat values per texel).
+void write_back_small_targets() {
+    for(Surface* s:R.smallTargets) {
+        if(!s->gpuWritten||s->writtenBackSeq==s->writeSeq||!s->image)continue;
+        s->writtenBackSeq=s->writeSeq;
+        if(s->arrayLayers!=1||s->imageType!=VK_IMAGE_TYPE_2D||!can_write_back(s))continue;
+        const uint32_t bytes=s->fmt.bytesPerBlock,ew=s->extent.width,eh=s->extent.height,w=s->width,h=s->height;
+        const LatteAddrLib::AddrSurfaceInfo_OUT info=guest_info(s,0);
+        const auto tm=static_cast<Latte::E_HWTILEMODE>(info.hwTileMode);
+        end_encoder();
+        Buffer buffer=create_readback_buffer(VkDeviceSize(ew)*eh*bytes);
+        transition_image(s,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+        VkBufferImageCopy region{};region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};region.imageExtent={ew,eh,1};
+        record::vkCmdCopyImageToBuffer(command_buffer(),s->image,s->layout,buffer.buffer,1,&region);
+        derive_dependency(buffer.use,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);
+        transition_buffer(buffer,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_READ_BIT);
+        transition_image(s,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        const uint32_t addr=s->addr,swizzle=s->swizzle;
+        R.completions.push_back([buffer,info,tm,addr,swizzle,bytes,w,h,ew,eh] {
+            LatteAddrLib::CachedSurfaceAddrInfo ci{};
+            if(Latte::TM_IsMacroTiled(tm))LatteAddrLib::SetupCachedSurfaceAddrInfo(&ci,0,0,bytes*8,info.pitch,info.height,info.depth,1,tm,false,(swizzle>>8)&1,(swizzle>>9)&3);
+            const auto* raw=static_cast<const uint8_t*>(buffer.mapped);
+            for(uint32_t y=0;y<h;++y)for(uint32_t x=0;x<w;++x) {
+                const uint32_t sx=uint32_t(uint64_t(x)*ew/w),sy=uint32_t(uint64_t(y)*eh/h);
+                memcpy(mem::ptr(addr+element_offset(info,tm,x,y,0,bytes*8,swizzle,&ci,false)),raw+(size_t(sy)*ew+sx)*bytes,bytes);
+            }
+        });
+        defer_buffer(buffer);
+    }
 }
 // WWHD_DUMP_SURFACE: a hex address, or WxH for every surface of that size
 static bool dump_surface_match(const char* e,uint32_t addr,uint32_t w,uint32_t h) {

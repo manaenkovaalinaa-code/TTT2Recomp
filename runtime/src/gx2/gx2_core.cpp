@@ -1234,7 +1234,13 @@ HLE(gx2, GX2GetSwapStatus) {
     if (arg(c, 3)) st64(arg(c, 3), timebase::guest_now());
 }
 HLE(gx2, GX2SetSwapInterval) { g_swap_interval = std::max<uint32>(arg(c, 0), 1); }
+static std::atomic<bool> g_trace_busy{false};
+namespace gx2 { void set_trace_busy(bool busy) { g_trace_busy = busy; } }
 HLE(gx2, GX2WaitForVsync) {
+    if (g_trace_busy.load(std::memory_order_relaxed)) {
+        BlockingScope b;
+        for (int i = 0; i < 6000 && g_trace_busy.load(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
     if(uncapped_benchmark()) {
         BlockingScope b;
         // The queue fence follows earlier swaps, whose presentation path waits

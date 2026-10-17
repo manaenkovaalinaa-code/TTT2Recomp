@@ -8,6 +8,9 @@
 #include "Cafe/HW/Latte/ISA/LatteReg.h"
 #include "Cafe/HW/Latte/ISA/RegDefines.h"
 #include "backend.h"
+// WWHD_FRAME_TRACE: while a frame is traced (slow), GX2WaitForVsync waits for it, so the game's own
+// hang check (TTT2 counts vsyncs without a flip) does not fire (gx2_core.cpp)
+namespace gx2 { void set_trace_busy(bool busy); }
 #include "deferred_dispatch.h"
 #include "buffer_cache.h"
 #include "render_prof.h"
@@ -42,6 +45,13 @@
 extern "C" uint64_t g_shader_state_gen;
 using namespace Latte;
 namespace gfxvk {
+// WWHD_FRAME_TRACE state (see frame_trace_arm)
+static uint64_t g_trace_frame = ~0ull;
+static std::string g_trace_dir, g_trace_tex;
+static uint32_t g_trace_draw = 0, g_trace_dumps = 0;
+static std::array<Surface*, 8> g_trace_colors{};
+static std::unordered_set<uint32_t> g_trace_shaders;
+bool frame_trace_on() { return R.frame == g_trace_frame; }
 namespace {
 bool preparation_stats_enabled() {
   static const bool enabled=std::getenv("WWHD_VK_STATS")!=nullptr;
@@ -1924,6 +1934,12 @@ StageResources bind_stage(const uint32_t *r, vk::Shader *sh,
         sh->kind == gfx::ProgramKind::OcclusionPixel)
       s = &aoPrivateColor;
     upload_surface(s);
+    if (frame_trace_on()) {
+      char t[112];
+      snprintf(t, sizeof t, " %s%u=%08X/fmt%X/%ux%u%s", sh->vertex ? "vt" : "t", unit, s->addr, s->format, s->width,
+               s->height, s->gpuWritten ? "/gpu" : "");
+      g_trace_tex += t;
+    }
     char psName[16]; snprintf(psName, sizeof psName, "%08X", r[mmSQ_PGM_START_PS] << 8);
     if (const char* e = []{ static const char* v = std::getenv("WWHD_DUMP_PS_TEXTURES"); return v; }(); e && !sh->vertex && (strstr(e, psName) || (!strcmp(e, "auto") && sh->dec->textureUnitListCount >= 5 && unit <= 4 && unit != 1))) {
       static std::unordered_set<uint64_t> dumped;
@@ -2060,6 +2076,43 @@ void drain_pending_guest_pipelines() {
 }
 void reset_pipeline_lookup_cache() { lastPipelineLookup = {}; pipelineLookaside = {}; samplerMemo = {}; drawBatchState = {}; }
 uint64_t draw_batch_submissions() { return drawBatchSubmissions; }
+// ---- TTT2 port diagnostics: WWHD_FRAME_TRACE=1 makes P / F12 (frame capture) also trace the next
+// frame: every draw (shaders, targets, blend state, textures) in the log, each render target after
+// the last draw of its pass as raw texels (captures/trace-<frame>/NNN-<addr>.surf, read with
+// tools/ttt2/surf2png.py) and the pixel shaders' GLSL
+static void trace_dump_targets() {
+  for (Surface* c : g_trace_colors) {
+    if (!c || g_trace_dumps >= 400) continue;
+    char name[160];
+    snprintf(name, sizeof name, "%s/%03u-d%04u-%08X-fmt%X-%ux%u.surf", g_trace_dir.c_str(), g_trace_dumps++,
+             g_trace_draw, c->addr, c->format, c->extent.width, c->extent.height);
+    dump_surface_raw(*c, name);
+  }
+  g_trace_colors = {};
+}
+void frame_trace_arm() {
+  static const bool on = getenv("WWHD_FRAME_TRACE") != nullptr;
+  if (!on) return;
+  g_trace_frame = R.frame + 1;
+  char dir[96];
+  snprintf(dir, sizeof dir, "captures/trace-%llu", (unsigned long long)g_trace_frame);
+  g_trace_dir = dir;
+  std::error_code ec;
+  std::filesystem::create_directories(g_trace_dir, ec);
+  g_trace_draw = g_trace_dumps = 0;
+  g_trace_colors = {};
+  g_trace_shaders.clear();
+  LOG("[trace] tracing frame %llu into %s", (unsigned long long)g_trace_frame, dir);
+  gx2::set_trace_busy(true);
+}
+void frame_trace_end() {
+  if (R.frame != g_trace_frame) return;
+  trace_dump_targets();
+  LOG("[trace] frame %llu: %u draws, %u targets written", (unsigned long long)g_trace_frame, g_trace_draw, g_trace_dumps);
+  g_trace_frame = ~0ull;
+  gx2::set_trace_busy(false);
+}
+
 // WWHD_VK_TRACE_PASSES=1 (issue #144): log each new render pass shape once, just before the driver
 // sees it, so a crash inside vkCmdBeginRendering names the last pass in the crash report's log lines
 static void trace_pass(const std::array<Surface *, 8> &colors, uint32_t ncolor, const Surface *depth,
@@ -2407,8 +2460,43 @@ void draw(const uint32_t *r, uint32_t prim, uint32_t count, uint32_t indexType,
       }
     }
   }
+  const bool tracing = frame_trace_on();
+  if (tracing) {
+    g_trace_tex.clear();
+    // a new set of targets: the previous pass's targets are finished
+    if (colors != g_trace_colors) trace_dump_targets();
+  }
   auto vres = bind_stage(r, vs, p.sets[0], p.dynamicUniforms, sx, sy, colors, depth, probe);
   auto pres = bind_stage(r, ps, p.sets[1], p.dynamicUniforms, sx, sy, colors, depth, probe);
+  if (tracing) {
+    std::string tg;
+    for (int i = 0; i < 8; i++)
+      if (colors[i]) {
+        char t[96];
+        snprintf(t, sizeof t, " c%d=%08X/fmt%X/%ux%u(%ux%u)", i, colors[i]->addr, colors[i]->format, colors[i]->width,
+                 colors[i]->height, colors[i]->extent.width, colors[i]->extent.height);
+        tg += t;
+      }
+    if (depth) { char t[64]; snprintf(t, sizeof t, " z=%08X/fmt%X", depth->addr, depth->format); tg += t; }
+    const uint32_t psAddr = r[mmSQ_PGM_START_PS] << 8;
+    LOG("[trace] draw %u vs %08X ps %08X prim %u count %u inst %u |%s | colorctl %08X blend0 %08X blend1 %08X mask %08X "
+        "dbctl %08X alpha %08X ref %08X |%s",
+        g_trace_draw, r[mmSQ_PGM_START_VS] << 8, psAddr, prim, count, instances, tg.c_str(), r[REGADDR::CB_COLOR_CONTROL],
+        r[REGADDR::CB_BLEND0_CONTROL], r[REGADDR::CB_BLEND0_CONTROL + 1], r[REGADDR::CB_TARGET_MASK],
+        r[REGADDR::DB_DEPTH_CONTROL], r[REGADDR::SX_ALPHA_TEST_CONTROL], r[REGADDR::SX_ALPHA_REF], g_trace_tex.c_str());
+    if (g_trace_shaders.insert(psAddr).second && ps && !ps->glsl.empty()) {
+      char name[160];
+      snprintf(name, sizeof name, "%s/ps-%08X.glsl", g_trace_dir.c_str(), psAddr);
+      if (FILE* f = fopen(name, "wb")) { fwrite(ps->glsl.data(), 1, ps->glsl.size(), f); fclose(f); }
+    }
+    if (g_trace_shaders.insert(0x80000000u | (r[mmSQ_PGM_START_VS] << 8 >> 1)).second && vs && !vs->glsl.empty()) {
+      char name[160];
+      snprintf(name, sizeof name, "%s/vs-%08X.glsl", g_trace_dir.c_str(), r[mmSQ_PGM_START_VS] << 8);
+      if (FILE* f = fopen(name, "wb")) { fwrite(vs->glsl.data(), 1, vs->glsl.size(), f); fclose(f); }
+    }
+    g_trace_colors = colors;
+    ++g_trace_draw;
+  }
   // Texture uploads, feedback copies, and sampling transitions above may have
   // ended the previous pass. Reuse only its exact active attachment set.
   bool reusePass = R.rendering && R.passTracked && R.passColors == colors &&

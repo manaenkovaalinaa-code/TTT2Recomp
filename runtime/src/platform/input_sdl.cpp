@@ -525,8 +525,10 @@ void handle_event(const SDL_Event& event){
   }
   return;
  }
- // Graphics shortcuts are plain keys scoped to the game window; repeats never toggle.
- if((event.type==SDL_EVENT_KEY_DOWN||event.type==SDL_EVENT_KEY_UP) && g_prompt_window &&
+ // Graphics shortcuts are plain keys scoped to the game window; repeats never toggle. Not in TTT2:
+ // its controls use those letters (O is tag), and they would never reach the game.
+ static const bool ttt2=std::strcmp(g_guest_build_name,"TTT2")==0;
+ if(!ttt2 && (event.type==SDL_EVENT_KEY_DOWN||event.type==SDL_EVENT_KEY_UP) && g_prompt_window &&
     event.key.windowID==SDL_GetWindowID(g_prompt_window) &&
     !(event.key.mod&(SDL_KMOD_CTRL|SDL_KMOD_ALT|SDL_KMOD_GUI))){
   char action=0;
@@ -547,6 +549,8 @@ void handle_event(const SDL_Event& event){
  #endif
  // a repeat never presses a key: one held down while the overlay or the text prompt had the keyboard (Enter
  // that confirmed a name) stays out of the game until pressed again
+ // F12: capture the next frame (captures/; with WWHD_FRAME_TRACE=1 also a trace of every draw)
+ if(event.type==SDL_EVENT_KEY_DOWN&&!event.key.repeat&&event.key.scancode==SDL_SCANCODE_F12){render::request_capture();return;}
  if(event.type==SDL_EVENT_KEY_DOWN||event.type==SDL_EVENT_KEY_UP){int code=keycode(event.key.scancode);if(code>=0){std::lock_guard lk(g_mu);g_keys[code]=event.type==SDL_EVENT_KEY_DOWN&&(g_keys[code]||!event.key.repeat);}}
 }
 void update(){

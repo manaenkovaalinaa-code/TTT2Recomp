@@ -6,6 +6,7 @@
 #include "gx2/gx2.h"
 #include <zlib.h>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -130,6 +131,28 @@ std::vector<uint8_t> read_rgba(Surface& source,bool encodeSrgb) {
 }
 }
 std::vector<uint8_t> read_surface_rgba(Surface& source,bool encodeSrgb) { return read_rgba(source,encodeSrgb); }
+// raw texels of level 0, layer 0: a 32-byte header ("WWSF", width, height, VkFormat, bytes per texel,
+// GX2 format, guest address, 0) and the rows (tools/ttt2/surf2png.py)
+void dump_surface_raw(Surface& s,const std::string& path) {
+ if(!s.image||s.fmt.depth||s.fmt.compressed||!s.fmt.hostBytesPerBlock)return;
+ const uint32_t bytes=s.fmt.hostBytesPerBlock,w=s.extent.width,h=s.extent.height;
+ const size_t size=size_t(w)*h*bytes;
+ if(!size||size>(96u<<20))return;
+ end_encoder();
+ Buffer buffer=create_readback_buffer(size);
+ transition_image(&s,VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_READ_BIT);
+ VkBufferImageCopy region{};region.imageSubresource={VK_IMAGE_ASPECT_COLOR_BIT,0,0,1};region.imageExtent={w,h,1};
+ record::vkCmdCopyImageToBuffer(command_buffer(),s.image,s.layout,buffer.buffer,1,&region);
+ derive_dependency(buffer.use,VK_PIPELINE_STAGE_TRANSFER_BIT,VK_ACCESS_TRANSFER_WRITE_BIT);
+ transition_buffer(buffer,VK_PIPELINE_STAGE_HOST_BIT,VK_ACCESS_HOST_READ_BIT);
+ // written when the GPU is done with this submission: no wait (a long stall trips the game's own checks)
+ const uint32_t header[8]={0x46535757u,w,h,uint32_t(s.fmt.pixel),bytes,s.format,s.addr,0};
+ std::array<uint32_t,8> head;std::copy(std::begin(header),std::end(header),head.begin());
+ R.completions.push_back([buffer,path,size,head] {
+  if(FILE* f=fopen(path.c_str(),"wb")){fwrite(head.data(),4,8,f);fwrite(buffer.mapped,1,size,f);fclose(f);}
+ });
+ defer_buffer(buffer);
+}
 void write_rgba_png(const std::string& path,uint32_t width,uint32_t height,const std::vector<uint8_t>& rgba) {
  write_png(path,width,height,rgba);
 }
