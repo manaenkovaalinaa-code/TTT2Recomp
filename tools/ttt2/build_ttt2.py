@@ -50,13 +50,38 @@ VULKAN_DEF = ("https://raw.githubusercontent.com/KhronosGroup/Vulkan-Loader/vulk
               "9ba339b7f5ee2df28487698a6840ecf095fac58b415c2c89ad9f161e9d316378")
 
 
+def fetch(url, dest):
+    """Downloads url to dest. GitHub's release files come from another host after a redirect, and on some
+    networks that connection is reset now and then: a few tries with urllib, then Windows' own curl.exe."""
+    tmp = dest + ".part"
+    last = None
+    for attempt in range(4):
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r, open(tmp, "wb") as f:
+                shutil.copyfileobj(r, f, 1 << 20)
+            os.replace(tmp, dest)
+            return
+        except OSError as e:  # URLError, ConnectionResetError, timeouts
+            last = e
+            log("download interrupted (%s), trying again" % e)
+            time.sleep(3 * (attempt + 1))
+    curl = shutil.which("curl.exe") or shutil.which("curl")
+    if curl:
+        log("trying curl")
+        r = subprocess.run([curl, "-L", "--fail", "--retry", "5", "--retry-delay", "3", "-o", tmp, url])
+        if r.returncode == 0:
+            os.replace(tmp, dest)
+            return
+    sys.exit("could not download %s (%s).\nCheck the internet connection (a VPN may help if GitHub downloads are "
+             "blocked) and run the setup again: finished steps are kept." % (url, last))
+
+
 def download(url, digest, path):
     if os.path.exists(path) and sha256(path) == digest:
         return
     log("downloading " + url)
-    tmp = path + ".part"
-    with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
-        shutil.copyfileobj(r, f, 1 << 20)
+    tmp = path + ".dl"
+    fetch(url, tmp)
     got = sha256(tmp)
     if got != digest:
         os.remove(tmp)
@@ -95,10 +120,7 @@ def fetch_tool(name, tools_dir):
     archive = os.path.join(tools_dir, os.path.basename(url))
     if not os.path.exists(archive) or sha256(archive) != digest:
         log("downloading %s (%s)" % (name, url))
-        tmp = archive + ".part"
-        with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
-            shutil.copyfileobj(r, f, 1 << 20)
-        os.replace(tmp, archive)
+        fetch(url, archive)
     got = sha256(archive)
     if got != digest:
         os.remove(archive)
